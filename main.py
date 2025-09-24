@@ -1,0 +1,1184 @@
+import sys,os
+from PySide6.QtCore import (Qt,QFile, QTextStream, Signal, QDir,QThread,QEvent,QPoint,QCoreApplication)
+from PySide6.QtGui import (QColor, QFont,QPixmap, QMovie)
+from PySide6.QtWidgets import (QApplication,QSlider, QTableWidget, QTableWidgetItem, QDialog, QMessageBox, QLabel, QMainWindow, QHBoxLayout, QVBoxLayout, QWidget,QPushButton, QFileDialog, QComboBox,QTextEdit)
+
+import psutil
+import openpyxl
+import pyqtgraph as pg
+from pyqtgraph.exporters import ImageExporter
+
+from Saving_thread import SavingThread
+from dm_tab import Distance_Measurement_Tab
+from adaptive_balance import adaptive_balance,Adaptive_Balance_Thread
+from balancefringe import fringes
+from processParams import processParams
+from resample import linear_k
+from resampleThread import ResampleThread
+from skimage import exposure
+from processingThread import ProcessingThread
+from TSAThread import TSAThread
+from dispersion import *
+from GifWindow import *
+from volumerender import *
+from enface_3D import *
+from fibergram import *
+from setting import *
+from glass_flatten import *
+from UpdateVolume import *
+
+import numpy as np
+
+
+from PIL import Image,ImageTk
+from octFuncs import *
+from random import randint
+from sidebar_ui import Ui_MainWindow
+
+
+class MyDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        layout = QVBoxLayout()
+        buttons = QHBoxLayout()
+        self.resize(300, 150)
+        self.setWindowTitle("Save to file")
+        # Create the dropdown menu
+        self.dropdown = QComboBox(self)
+        if parent.processParameters.newSRFlag or parent.processParameters.res_fast == 8192:
+            self.dropdown.addItem("Save speckle reduced images")
+            layout.addWidget(self.dropdown)
+        else:
+            self.dropdown.addItem("Average 32 frames and save")
+            self.dropdown.addItem("Average 16 frames and save")
+            self.dropdown.addItem("Average 8 frames and save")
+            self.dropdown.addItem("Average 4 frames and save")
+            self.dropdown.addItem("Save as tiff stack")
+            self.dropdown.addItem("Save as dicom")
+            layout.addWidget(self.dropdown)
+
+        # Create the OK button
+
+        
+        ok_button = QPushButton("OK", self)
+        ok_button.clicked.connect(self.accept)
+        cancel_button = QPushButton("Cancel", self)
+        cancel_button.clicked.connect(self.reject)
+        layout.addLayout(buttons)
+        buttons.addWidget(ok_button)
+        buttons.addWidget(cancel_button)
+
+        self.setLayout(layout)
+
+    def get_selected_option(self):
+        return self.dropdown.currentText()
+
+    
+
+
+class MainWindow(QMainWindow):
+
+    def __init__(self):
+        super(MainWindow, self).__init__()
+        self.ui = Ui_MainWindow()
+        self.ui.setupUi(self)
+        self.cur_img_slow_no = 0
+        self.cur_img_fast_no = 0
+        self.progressValue = 0
+        self.setWindowTitle("VisOCT Metro")
+        self.image_ready = False
+        self.flip_bscan = False
+        self.start_point_marked = False
+        self.status = "Waiting for user to choose raw file"
+        self._translate = QCoreApplication.translate
+
+        self.frame_3D_linear = np.array([])
+        self.frame_3D_20log = np.array([])
+        self.frame_3D_resh = np.array([])
+        self.system_setting = System_setting(self)
+        self.ui.stackedWidget.setCurrentIndex(5)
+        self.ui.home_btn.clicked.connect(self.go_home)
+        self.ui.flip_btn.clicked.connect(self.flip)
+        self.ui.multiple_measurement_btn.clicked.connect(self.multiple_measurement_btn_toggle)
+        self.ui.set_note_btn.clicked.connect(self.set_note_toggle)
+        self.ui.actionOpen_Raw.triggered.connect(self.open_file)
+        self.ui.actionSystem_Setting.triggered.connect(self.open_system_setting)
+        self.ui.open_file_btn.clicked.connect(self.open_file)
+
+        self.ui.pixel_map_btn.clicked.connect(self.set_pixel_map)
+        #self.ui.contrast_btn_2.clicked.connect(self.set_pixel_map)
+
+        #self.ui.adaptive_btn_1.clicked.connect(self.adaptive_balance)
+        #self.ui.adaptive_btn_2.clicked.connect(self.adaptive_balance)
+
+        self.ui.octa_btn.clicked.connect(self.octa_window)
+        self.ui.batch_btn.clicked.connect(self.batch_processing)
+        self.ui.fibergram_btn.clicked.connect(self.fibergram_window)
+        self.ui.flatten_btn.clicked.connect(self.run_flatten)
+        self.ui.circ_btn.clicked.connect(self.circ_window)
+        self.ui.enface_otherdim.clicked.connect(self.openEnface_3D)
+        self.ui.set_rindex_btn.clicked.connect(self.set_rindex)
+        self.ui.pushButton_4.clicked.connect(self.openRendererWindow)
+
+        file_name = "saved_setting.txt"
+        current_directory = os.getcwd()
+        file_path = os.path.join(current_directory, file_name)
+        try:
+            # Attempt to open the file for reading
+            with open(file_path, 'r') as file:
+                content = file.read()
+                if content.split(",")[4] == "True":
+                    self.preview_mode = True
+                    self.preset_dispersion = float(content.split(",")[5])
+                    self.b_scan_preview_average = int(content.split(",")[6])
+                else:
+                    self.preview_mode = False
+
+        except FileNotFoundError:
+            self.preview_mode = False
+
+        self.update_volume_process = UpdateVolumeThread()
+        self.update_volume_process.progress.connect(self.update_volume_progress_callback)
+        self.update_volume_process.volume_ready.connect(self.update_volume_ready_callback)
+
+        self.process = ProcessingThread()
+        self.process.progress.connect(self.progress_callback)
+        self.process.updateProgressBar.connect(self.updateProgress)
+        self.process.image_ready.connect(self.image_ready_callback)
+
+
+    ## Change QPushButton Checkable status when stackedWidget index changed
+    def on_stackedWidget_currentChanged(self, index):
+        btn_list = self.ui.icon_only_widget.findChildren(QPushButton) \
+                    + self.ui.full_menu_widget.findChildren(QPushButton)
+        
+        for btn in btn_list:
+            if index in [5, 6]:
+                btn.setAutoExclusive(False)
+                btn.setChecked(False)
+            else:
+                btn.setAutoExclusive(True)
+
+    def open_system_setting(self):
+        self.system_setting.widget.show()
+
+    def set_rindex(self):
+        index = float(self.ui.Refractive_index.toPlainText())
+        self.ui.Slow_Axis.set_refractive_index(index)
+        self.ui.textEdit_2.append("Refractive index has been set to:"+index)
+
+    def run_flatten(self):
+        self.ui.fibergram_seg_btn.setEnabled(False)
+        self.frame_3D_resh_origin_linear = np.load(self.processParameters.fname.split('.RAW')[0]+'/frame_3D.npy')
+        self.glass_flatten_process = glass_flatten(self.frame_3D_resh_origin_linear)
+        self.glass_flatten_process.start()
+        #self.glass_flatten_process.progress.connect(self.flatten_process_callback)
+        self.glass_flatten_process.flatten_ready.connect(self.flatten_ready_callback)
+
+    def flatten_ready_callback(self,flatten_volume):
+        self.frame_3D_resh = np.float32(20*np.log10(flatten_volume))
+        self.updateImg(self.ui.Enface,self.ui.Slow_Axis,self.oct_lowVal,self.oct_highVal,False)
+
+    def changeEvent(self, event):
+        if event.type() == QEvent.WindowStateChange:
+            if self.windowState() == Qt.WindowMaximized:
+                self.ui.Slow_Axis.onWindowSizeChange(self.ui.Slow_Axis.geometry())
+            else:
+                self.ui.Slow_Axis.onWindowSizeChange(self.ui.Slow_Axis.geometry())
+
+    def TSA_processing(self):
+        self.TSA = TSAThread(self.processParameters,self.frame_3D_resh_origin,self.frame_OCTA)
+        self.TSA.volume_ready.connect(self.TSA_ready_callback)
+        self.TSA.start()
+
+    def batch_processing(self):
+        cur_dir = QDir.currentPath()
+        #with open(cur_dir+"/pixelmap.txt", 'r') as file:
+                #match_Path = str(file.read().rstrip())
+        
+        self.ui.label.setText(self._translate("MainWindow", "Status: VisOCT Explorer(Selecting File...)"))
+        print(cur_dir)
+        dlg = QFileDialog()
+        dlg.setFileMode(QFileDialog.AnyFile)
+        dlg.setNameFilter("*.raw")
+
+        filenames = QComboBox()
+        if dlg.exec():
+            
+            filenames = dlg.selectedFiles()
+            
+            directory = os.path.dirname(filenames[0])
+            self.f = filenames[0]
+            print("filename:"+self.f)
+            datasets = []
+            extension = "1.RAW"
+            for root, dirs, files in os.walk(directory):
+                for file in files:
+                    print(file)
+                    if file.endswith(extension):
+                        datasets.append(os.path.join(root, file))
+
+            #print("matched_files:",datasets)
+			
+            self.ui.textEdit_2.setText("File "+self.f+" selected")
+            if "_1.RAW" in self.f or "_2.RAW" in self.f:
+                try:
+                    with open(cur_dir+"/pixelmap.txt", 'r') as file:
+                        self.match_Path = str(file.read().rstrip())
+                            
+                except (IOError,FileNotFoundError):
+                    msg_box = QMessageBox()
+                    msg_box.setIcon(QMessageBox.Icon.Warning)
+                    msg_box.setWindowTitle("Warning")
+                    msg_box.setText('Pixel map not selected yet.\nYou can select an existing pixel map to begin with.\nOr generate one for the current dataset?')
+                    
+                    select_button = QPushButton("Select existing pixel map")
+                    generate_button = QPushButton("Generate new pixel map")
+
+                    select_button.clicked.connect(self.select_pixmap)
+                    generate_button.clicked.connect(self.adaptive_balance)
+
+                    msg_box.addButton(select_button, QMessageBox.AcceptRole)
+                    msg_box.addButton(generate_button, QMessageBox.AcceptRole)
+                    # Connect custom slots to button clicks
+                    #select_button.clicked.connect(lambda: custom_button_handler(custom_button1))
+                    #generate_button.clicked.connect(lambda: custom_button_handler(custom_button2))
+
+                    msg_box.exec()
+                    return
+            else:
+                self.match_Path = "None"
+            #for dataset in datasets:
+            #self.processParameters = processParams(32, datasets, self.match_Path)
+            self.process = ProcessingThread(datasets,True,self.match_Path)
+            self.process.finished.connect(self.process.deleteLater)
+            self.process.progress.connect(self.progress_callback)
+            self.process.updateProgressBar.connect(self.updateProgress)
+            self.process.image_ready.connect(self.image_ready_callback)
+            self.process.start()
+
+    def adaptive_balance(self):
+        
+        cur_dir = QDir.currentPath()
+        self.ui.label.setText(self._translate("MainWindow", "Status: VisOCT Explorer(Adaptive balancing...)"))
+        print(cur_dir)
+
+        processParameters = processParams(32,self.f, "")
+        print(processParameters.fname)
+        self.adaptive_process = Adaptive_Balance_Thread(processParameters.fname,processParameters,self.ui)
+        print("class created 2")
+        self.adaptive_process.start()
+        self.adaptive_process.optimized.connect(self.pixelMap_ready)
+    
+    def pixelMap_ready(self,x,pixMap_name):
+        self.ui.textEdit_2.verticalScrollBar().setValue(self.ui.textEdit_2.verticalScrollBar().maximum())
+        self.pixelMap_ready = True
+        pix_array = np.linspace(0,2048,2048)
+        pixMap = np.polyval(x,pix_array)
+        pixMap[pixMap<0] = 0
+        pixMap[pixMap>2048] = 2048
+        file_path = os.path.join(QDir.currentPath(), 'Pixel Maps', pixMap_name)
+        with open(file_path,'wb') as file:
+            pixMap.tofile(file)
+        print(pixMap)
+
+    def open_video(self):
+        self.ui.label.setText(self._translate("MainWindow", "Status: VisOCT Explorer (B-scan Fly Through)"))
+        self.gif_window = GifWindow(self.directory+'./Bscan_Flythru.gif')
+        #self.gif_window = GifWindow(self.directory+'./Bscan_Flythru.gif')
+        self.gif_window.show()
+
+    def octa_window(self):
+        self.ui.stackedWidget.setCurrentIndex(2)
+
+    def fibergram_window(self):
+        self.ui.fibergram_seg_btn.clicked.connect(self.run_fibergram_seg)
+        self.threshold_Val = int(self.ui.Threshold_fibergram.toPlainText())
+        self.ui.stackedWidget.setCurrentIndex(3)
+    
+    def run_fibergram_seg(self):
+        self.ui.fibergram_seg_btn.setEnabled(False)
+        self.frame_3D_resh_origin_linear = np.load(self.processParameters.fname.split('.RAW')[0]+'/frame_3D.npy')
+        self.frame_3D_resh_origin_20log = 20*np.log10(self.frame_3D_resh_origin_linear)
+        self.fibergram_process = FibergramThread(self.frame_3D_resh_origin_20log,self.frame_3D_resh_origin_linear,self.oct_lowVal,self.oct_highVal,self.threshold_Val)
+        self.fibergram_process.start()
+        self.fibergram_process.progress.connect(self.fibergram_progress_callback)
+        self.fibergram_process.fibergram_ready.connect(self.fibergram_ready_callback)
+
+    def fibergram_progress_callback(self,progress_percent):
+        self.ui.progressBar_fibergram.setValue(progress_percent)
+
+    def fibergram_ready_callback(self,fibergram_enface,fitted_top_boundary):
+        self.fibergram_enface = fibergram_enface
+        self.fitted_top_boundary = fitted_top_boundary
+        self.fibergram_enface = imcontrast_adjust(self.fibergram_enface)
+        #print(np.shape(self.fibergram))
+        enface = pg.ImageItem(np.fliplr(np.flipud(self.fibergram_enface)))
+        enface.setRect(0,0,1024,1024)
+        fitted_slow_axis = pg.ImageItem(np.rot90(((np.clip((self.frame_3D_resh[:,:,int(self.frame_3D_resh.shape[2]/2)] - self.lowVal) / (self.highVal - self.lowVal), 0, 1)) * 255).astype(np.uint8)))
+        fitted_slow_axis.setRect(0,0,1024,1024)
+        x = np.arange(np.shape(self.frame_3D_resh)[1])*2
+        y = np.flip(self.fitted_top_boundary[:,int(np.shape(self.frame_3D_resh_origin_linear)[2]/2)-10])
+        self.ui.bscan_number_label_fibergram.setText(self._translate("MainWindow", "B-scan #: "+str(int(self.frame_3D_resh.shape[2]/2)*4)))
+        self.ui.bscan_dim_label_fibergram.setText(self._translate("MainWindow", "B-scan dimension: (H)1024 x (W)"+str(self.processParameters.res_fast)))
+        self.ui.actual_dim_label_fibergram.setText(self._translate("MainWindow", "Actual dimension: (H)1150 um x (W)"+str(self.processParameters.xrng)+" um"))
+        self.ui.Fibergram_Enface.addItem(enface,clear=True)
+        self.ui.Fibergram_Slow_Axis.addItem(fitted_slow_axis,clear=True)
+        scatter = pg.ScatterPlotItem(x=x,y=y, size=2, pen='r')
+        self.ui.Fibergram_Slow_Axis.addItem(scatter)
+        del self.frame_3D_resh_origin_linear
+        del self.frame_3D_resh_origin_20log
+        self.ui.fibergram_seg_btn.setEnabled(True)
+
+    #to be implemented: when to delete the frame_3D_resh_origin_20log
+    def openRendererWindow(self):
+        self.frame_3D_resh_origin_20log = 20*np.log10(np.load(self.processParameters.fname.split('.RAW')[0]+'/frame_3D.npy'))
+        self.rendererWindow = Visualizer(self.frame_3D_resh_origin_20log,self.oct_lowVal,self.oct_highVal)
+        del self.frame_3D_resh_origin_20log
+        #self.rendererWindow.start()
+        #self.rendererWindow.show()
+
+    def openEnface_3D(self):
+        self.frame_3D_resh_origin_20log = (np.load(self.processParameters.fname.split('.RAW')[0]+'/frame_3D.npy'))
+        self.rendererWindow = enface_3D(self.frame_3D_resh_origin_20log,self.enface_pixmap)
+        del self.frame_3D_resh_origin_20log
+
+    def circ_window(self):
+        self.ui.stackedWidget.setCurrentIndex(1)
+        self.ui.Edit_start_x.setText('')
+        self.ui.Edit_start_y.setText('')
+        self.ui.Edit_end_x.setText('')
+        self.ui.Edit_end_y.setText('')
+        self.prev_x1 = self.ui.Edit_start_x.toPlainText()
+        self.prev_y1 = self.ui.Edit_start_y.toPlainText()
+        self.prev_x2 = self.ui.Edit_end_x.toPlainText()
+        self.prev_y2 = self.ui.Edit_end_y.toPlainText()
+        self.ui.Edit_start_x.textChanged.connect(self.on_center_changed)
+        self.ui.Edit_start_y.textChanged.connect(self.on_center_changed)
+        self.ui.Edit_end_x.textChanged.connect(self.on_center_changed)
+        self.ui.Edit_end_y.textChanged.connect(self.on_center_changed)
+        
+    def on_center_changed(self):
+        new_x1 = self.ui.Edit_start_x.toPlainText()
+        new_y1 = self.ui.Edit_start_y.toPlainText()
+        new_x2 = self.ui.Edit_end_x.toPlainText()
+        new_y2 = self.ui.Edit_end_y.toPlainText()
+        if new_x1 == self.prev_x1 and new_y1 == self.prev_y1 and new_x2 == self.prev_x2 and new_y2 == self.prev_y2:
+            return
+        else:
+            self.prev_x1 = new_x1
+            self.prev_y1 = new_y1
+            self.prev_x2 = new_x2
+            self.prev_y2 = new_y2
+            if new_x1 != '' and new_y1 != '':
+                self.x_center1 = int(float(new_x1)*(1024/self.processParameters.xrng))
+                self.y_center1 = int(float(new_y1)*(1024/self.processParameters.yrng))
+                self.ui.Enface_circ.clear()
+                self.ui.Enface_circ.position1 = [self.x_center1, self.y_center1]
+                self.ui.Enface_circ.addItem(self.circ_enface)
+                self.ui.Enface_circ.addItem(pg.ScatterPlotItem([self.x_center1], [self.y_center1], pen='r', brush='r', size=6))
+                if self.ui.Enface_circ.position2 != None:
+                    position2 = self.ui.Enface_circ.position2
+                    self.ui.Enface_circ.addItem(pg.ScatterPlotItem([position2[0]], [position2[1]], pen='r', brush='r', size=6))
+                    self.ui.Enface_circ.plot([self.x_center1,position2[0]],[self.y_center1,position2[1]],pen=pg.mkPen(width=2,color='r'))
+            
+            if new_x2 != '' and new_y2 != '':
+                self.x_center2 = int(float(new_x2)*(1024/self.processParameters.xrng))
+                self.y_center2 = int(float(new_y2)*(1024/self.processParameters.yrng))
+                self.ui.Enface_circ.clear()
+                self.ui.Enface_circ.position2 = [self.x_center2, self.y_center2]
+                self.ui.Enface_circ.addItem(self.circ_enface)
+                self.ui.Enface_circ.addItem(pg.ScatterPlotItem([self.x_center2], [self.y_center2], pen='r', brush='r', size=6))
+                if self.ui.Enface_circ.position1 != None:
+                    position1 = self.ui.Enface_circ.position1
+                    self.ui.Enface_circ.addItem(pg.ScatterPlotItem([position1[0]], [position1[1]], pen='r', brush='r', size=6))
+                    self.ui.Enface_circ.plot([position1[0],self.x_center2],[position1[1],self.y_center2],pen=pg.mkPen(width=2,color='r'))
+
+            if self.start_point_marked:
+                self.start_point_marked = False
+                self.ui.Enface_circ.clear()
+                self.ui.Enface_circ.addItem(self.circ_enface,clear = True)
+
+    def resample(self):
+        new_x1 = self.ui.Edit_start_x.toPlainText()
+        new_y1 = self.ui.Edit_start_y.toPlainText()
+        new_x2 = self.ui.Edit_end_x.toPlainText()
+        new_y2 = self.ui.Edit_end_y.toPlainText()
+        if new_x1 != '' and new_y1 != '' and new_x2 != '' and new_y2 != '':
+            self.frame_3D_resh_origin = 20*np.log10(np.load(self.processParameters.fname.split('.RAW')[0]+'/frame_3D.npy'))
+            position1 = [int(float(new_x1)*(self.processParameters.res_fast/self.processParameters.xrng)),int(float(new_y1)*(self.processParameters.res_slow/self.processParameters.yrng))]
+            position2 = [int(float(new_x2)*(self.processParameters.res_fast/self.processParameters.xrng)),int(float(new_y2)*(self.processParameters.res_slow/self.processParameters.yrng))]
+            width = self.ui.averaging_dropdown_circ.currentIndex()+1
+            print("frame_3D shape",np.shape(self.frame_3D_resh))
+            #if self.processParameters.res_slow == self.processParameters.res_fast:
+            self.resample_process = ResampleThread(self.processParameters,self.frame_3D_resh_origin,position1,position2,width)
+            self.resample_process.start()
+            self.resample_process.progress.connect(self.circ_progress_callback)
+            self.resample_process.resample_ready.connect(self.resample_ready_callback)
+
+    def circ_progress_callback(self,prog_val):
+        print(prog_val)
+        self.ui.progressBar_circ.setValue(prog_val)
+        
+    def resample_ready_callback(self,frame_3D,start_coord,end_coord):
+        print(9)
+        self.ui.circ_Slow_Axis.clear()
+        self.circ_step = 0.1
+        #print(end_coord)
+        #frame_3D = 20*np.log10(frame_3D)
+        self.frame_3D = frame_3D
+        circ_img = ((np.clip((frame_3D - self.oct_lowVal) / (self.oct_highVal - self.oct_lowVal), 0, 1)) * 255).astype(np.uint8)
+        circ_img = pg.ImageItem(np.flipud(np.rot90(circ_img)))
+        #self.ui.Enface_circ.plot([start_coord[0],center[0]],[start_coord[1],center[1]],pen=pg.mkPen('r',width=3))
+        self.start_point_marked = True
+        circ_img.setRect(0,0,1024,1024)
+        self.ui.circ_Slow_Axis.addItem(circ_img, clear=True)
+        self.ui.circ_Slow_Axis.setImageSize(self.processParameters,self.ui.distance_circ,1024)
+        self.ui.circ_Slow_Axis.setMeasurement_result_table(self.dm_tab)
+        self.ui.reset_measure_circ.clicked.connect(self.reset_circ_measurement)
+        self.ui.oct_contrast_Slider_circ.setEnabled(True)
+        self.ui.oct_contrast_Slider_circ.valueChanged.connect(self.circ_low)
+        
+
+    def circ_low(self,value):
+        self.circ_lowVal = (value-75)*self.circ_step+self.lowVal                           #lower lowbound and higher upperbound for bscan
+        self.circ_highVal = (self.ui.oct_contrast_Slider_circ.value()-75)*self.circ_step+self.highVal
+        self.update_Circ_Img()
+
+    def update_Circ_Img(self):
+        self.ui.circ_Slow_Axis.clear()
+        circ_img = ((np.clip((self.frame_3D - self.circ_lowVal) / (self.circ_highVal - self.circ_lowVal), 0, 1)) * 255).astype(np.uint8)
+        circ_img = pg.ImageItem(np.flipud(np.rot90(circ_img)))
+        circ_img.setRect(0,0,8192,1024)
+        self.ui.circ_Slow_Axis.addItem(circ_img, clear=True)
+        #self.ui.circ_Slow_Axis.setImageSize(self.processParameters,self.ui.distance,self.ui.circ_Slow_Axis.geometry())
+
+    def go_home(self):
+        self.ui.stackedWidget.setCurrentIndex(0)
+        self.ui.label.setText(self._translate("MainWindow", "Status: VisOCT Explorer "+self.status))
+
+    def reset_circ_measurement(self):
+        self.ui.circ_Slow_Axis.clear()
+        circ_img = ((np.clip((self.frame_3D - self.lowVal) / (self.highVal - self.lowVal), 0, 1)) * 255).astype(np.uint8)
+        circ_img = pg.ImageItem(np.flipud(np.rot90(circ_img)))
+        circ_img.setRect(0,0,8192,1024)
+        self.ui.circ_Slow_Axis.addItem(circ_img, clear=True)
+        self.ui.circ_Slow_Axis.reset_measure()
+
+    def circ_clear(self):
+        self.ui.Edit_start_x.setText('')
+        self.ui.Edit_start_y.setText('')
+        self.ui.Edit_end_x.setText('')
+        self.ui.Edit_end_y.setText('')
+        self.ui.Enface_circ.clear()
+        self.ui.Enface_circ.addItem(self.circ_enface, clear=True)
+        self.ui.Enface_circ.reset_measure()
+
+    def reset_measurement(self):
+        slow_axis_img_np = cv2.resize(((np.clip((self.frame_3D_resh[:,:,self.cur_img_slow_no] - self.oct_lowVal) / (self.oct_highVal - self.oct_lowVal), 0, 1)) * 255).astype(np.uint8),(0,0),fx=4,fy=4)
+        self.ui.Slow_Axis.clear()
+        slow_img = pg.ImageItem(np.flipud(np.rot90(slow_axis_img_np)))
+        slow_img.setRect(0,0,1024,1024)
+        self.ui.Slow_Axis.addItem(slow_img, clear=True)
+        self.ui.Slow_Axis.reset_measure()
+        self.ui.distance.setText(" ")
+
+    def TSA_ready_callback(self,frame_3D,frame_OCTA):
+        lowVal = self.lowVal
+        highVal = self.highVal
+        self.slow_axis_img_np = ((np.clip((frame_3D[:,:,int(frame_3D.shape[2]/2)] - lowVal) / (highVal - lowVal), 0, 1)) * 255).astype(np.uint8)
+        self.slow_axis_img = pg.ImageItem(np.rot90(self.slow_axis_img_np))
+        self.slow_axis_img.setRect(0,0,1024,1024)
+        self.ui.Slow_Axis.clear()
+        self.ui.Slow_Axis.addItem(self.slow_axis_img, clear=True)
+        self.ui.Slow_Axis.setImageSize(self.processParameters,self.ui.distance,self.ui.Slow_Axis.geometry(),1024)
+        self.cur_img_slow_no = int(self.frame_3D_resh.shape[2]/2)
+
+        fast_axis_img = ((np.clip((frame_3D[:,int(frame_3D.shape[1]/2),:] - lowVal) / (highVal - lowVal), 0, 1)) * 255).astype(np.uint8)
+        self.ui.Fast_Axis.clear()
+        self.ui.Fast_Axis.addItem(pg.ImageItem(np.rot90(fast_axis_img)), clear=True)
+        self.cur_img_fast_no = int(self.frame_3D_resh_origin.shape[1]/2)
+        
+        
+    def circ_on_mouse_drag(self,event):
+        if event.button() == Qt.LeftButton:
+            # Update the position of the draggable point
+            pos = self.ui.Enface_circ.getViewBox().mapToView(event.scenePos())
+            print("x:",pos.x())
+            print("y:",pos.x())
+            self.resample_start.setData(x=[pos.x()], y=[pos.y()])
+            resample_x1 = str(int(pos.x()*self.processParameters.xrng/1024))
+            resample_y1 = str(int(pos.y()*self.processParameters.yrng/1024))
+            self.ui.Edit_start_x.setText(resample_x1)
+            self.ui.Edit_start_y.setText(resample_y1)
+
+    def update_volume(self):
+        self.frame_3D_resh_origin_linear = np.load(self.processParameters.fname.split('.RAW')[0]+'/frame_3D.npy')
+        self.enface_divider = int(self.ui.averaging_dropdown.toPlainText())
+        
+        self.ui.bscan_width.setText(self._translate("MainWindow", "B-scan width: "+str(self.processParameters.xrng*int(self.ui.averaging_dropdown.toPlainText())/int(self.processParameters.res_slow))+" um"))
+        self.update_volume_process.set_attrib(self.frame_3D_resh_origin_linear,self.processParameters,self.enface_divider)
+        self.update_volume_process.start()
+        del self.frame_3D_resh_origin_linear
+
+    def update_volume_progress_callback(self,progress_percent):
+        self.ui.progressBar.setValue(progress_percent)
+
+    def update_volume_ready_callback(self,frame_3D_linear):
+        self.frame_3D_linear = frame_3D_linear
+        self.frame_3D_20log = 20*np.log10(frame_3D_linear)
+        self.frame_3D_resh = self.frame_3D_20log
+        self.cur_img_slow_no = int(self.frame_3D_resh.shape[2]/2)
+        self.slow_axis_img_np = cv2.resize(((np.clip((self.frame_3D_resh[:,:,self.cur_img_slow_no] - self.oct_lowVal) / (self.oct_highVal - self.oct_lowVal), 0, 1)) * 255).astype(np.uint8),(0,0),fx=4,fy=4)
+        self.ui.Slow_Axis.clear()
+        slow_img = pg.ImageItem(np.flipud(np.rot90(self.slow_axis_img_np)))
+        slow_img.setRect(0,0,1024,1024)
+        self.ui.Slow_Axis.addItem(slow_img, clear=True)
+        self.ui.Slow_Axis.reset_measure()
+        self.ui.distance.setText(" ")
+        self.red_line.setValue(512)
+
+    def image_ready_callback(self,frame_3D_resh,directory,lowVal,highVal,QI,frame_OCTA=None,octa_lowVal=None,octa_highVal=None):
+        self.frame_3D_20log = np.float32(20*np.log10(frame_3D_resh))
+        self.frame_3D_resh = self.frame_3D_20log
+        
+        self.linear_scale = False
+        #for q in QI:
+        #    print("QI is:",q)
+        #hist,bins = np.histogram(self.frame_3D_20log,bins=100)
+        #hist = hist/(np.max(hist) * 0.1)
+
+        #self.ui.tlogt.setChecked(True)
+        #self.ui.linear.setChecked(False)
+        #self.ui.tlogt.clicked.connect(self.set_frame_3D_log)
+        #self.frame_3D_resh
+        self.enface_divider = 4
+
+        self.frame_OCTA = frame_OCTA
+        self.oct_lowVal = lowVal
+        self.oct_highVal = highVal
+        self.lowVal = lowVal
+        self.highVal = highVal
+        self.image_ready = True
+        self.oct_step = float(70/99)
+        self.ui.reset_measure.clicked.connect(self.reset_measurement)
+
+        self.directory = directory
+        
+        self.ui.Enface.clear()
+
+        if self.preview_mode!=True:
+            enface_pixmap = np.array(Image.open(directory+"/enface.tiff"))
+            self.enface_pixmap = enface_pixmap
+            self.enface_height = enface_pixmap.shape[1]
+            self.enface_width = enface_pixmap.shape[0]
+
+            enface = pg.ImageItem(np.fliplr(enface_pixmap))
+            self.circ_enface = pg.ImageItem(np.fliplr(enface_pixmap))
+            enface.setRect(0,0,1024,1024)
+            self.circ_enface.setRect(0,0,1024,1024)
+            self.enface_lowVal = np.min(enface_pixmap)
+            self.enface_highVal = np.max(enface_pixmap)
+            self.oct_enface_step = float((self.enface_highVal-self.enface_lowVal)/220)
+
+        #self.ui.contrast_histogram_widget.clear()
+        #contrast_histo = CustomBarGraphItem(x = bins[:-1], height = hist, width = 1, brush ='g') 
+        
+        log_histo = QPixmap(directory+"\log_scale_contrast.tiff")
+        log_histo = log_histo.scaledToWidth(405)
+        self.ui.contrast_histogram_widget.setPixmap(log_histo)
+        #self.ui.contrast_histogram.setXRange(-100, 10, padding=0)
+        #self.ui.contrast_histogram.setYRange(0, 10, padding=0)
+        if self.preview_mode != True:
+            self.ui.Enface.addItem(enface,clear = True)
+        red_line = pg.InfiniteLine(pos=512,angle=0,movable=True,pen=pg.mkPen('blue',width=5))
+        red_line.setBounds([0,1024])
+        self.ui.Enface.addItem(red_line)
+        red_line.sigDragged.connect(self.Enface_red_dragged)
+        self.red_line = red_line
+        
+        self.ui.bscan_dim_label.setText(self._translate("MainWindow", "B-scan dimension: (H)1024 x (W)"+str(self.processParameters.res_fast)))
+        self.ui.actual_dim_label.setText(self._translate("MainWindow", "Actual dimension: (H)1150 um x (W)"+str(self.processParameters.xrng)+" um"))
+        self.ui.bscan_width.setText(self._translate("MainWindow", "B-scan width: "+str(self.processParameters.xrng*int(self.ui.averaging_dropdown.toPlainText())/int(self.processParameters.res_slow))+" um"))
+        self.slow_axis_img_np = cv2.resize(((np.clip((self.frame_3D_resh[:,:,self.cur_img_slow_no] - self.oct_lowVal) / (self.oct_highVal - self.oct_lowVal), 0, 1)) * 255).astype(np.uint8),(0,0),fx=4,fy=4)
+        self.cur_img_slow_no = int(self.frame_3D_resh.shape[2]/2)
+        self.ui.bscan_number_label.setText(self._translate("MainWindow", "B-scan #: "+str(self.cur_img_slow_no*4)))
+        self.ui.Slow_Axis.setImageSize(self.processParameters,self.ui.distance,1024)
+        slow_axis_img = pg.ImageItem(np.fliplr(np.rot90(self.slow_axis_img_np)))
+        slow_axis_img.setRect(0,0,1024,1024)
+        self.ui.Slow_Axis.clear()
+        self.ui.Slow_Axis.addItem(slow_axis_img, clear=True)
+        
+        self.ui.Slow_Axis.setBscan_number(int(self.frame_3D_resh.shape[2]*2))
+        self.ui.save_marked_plot.clicked.connect(self.save_marked_measurement_plot)
+
+        #fast_axis_img = ((np.clip((self.frame_3D_resh_origin[:,int(self.frame_3D_resh_origin.shape[1]/2),:] - lowVal) / (highVal - lowVal), 0, 1)) * 255).astype(np.uint8)
+        #fast_axis_img = pg.ImageItem(np.flipud(np.rot90(fast_axis_img)))
+        #fast_axis_img.setRect(0,0,1024,1024)
+        #self.ui.Fast_Axis.clear()
+        #self.ui.Fast_Axis.addItem(fast_axis_img, clear=True)
+        #self.ui.Fast_Axis.setImageSize(self.processParameters,self.ui.distance,self.ui.Fast_Axis.geometry(),1024)
+        self.reset_measurement()
+
+        if self.flip_bscan:
+            self.ui.Slow_Axis.invertY(True)
+            #self.ui.Fast_Axis.invertY(True)
+
+        
+        self.ui.Enface_circ.clear()
+        if self.preview_mode != True:
+            self.ui.Enface_circ.addItem(self.circ_enface,clear = True)
+            self.ui.Enface_circ.setImageSize(self.ui.Edit_start_x,self.ui.Edit_start_y,self.ui.Edit_end_x,self.ui.Edit_end_y,self.processParameters,1024)
+        self.ui.circ_clear_btn.clicked.connect(self.circ_clear)
+
+        
+        x = [512,512]
+        y = [512,512]
+        #self.resample_center.sigDragged.connect(self.Enface_red_dragged)
+        #self.new_x = 512
+        #self.new_y = 512
+        self.x_center1 = 512
+        self.y_center1 = 512
+        self.x_center2 = 512
+        self.y_center2 = 512
+        #self.ui.Enface_circ.addItem(self.resample_circ)
+
+        self.ui.save_btn.clicked.connect(self.save_img)
+        self.ui.next_frame_btn.clicked.connect(self.go_prev)
+        self.ui.prev_frame_btn.clicked.connect(self.go_next)
+        self.radius_given = self.ui.horizontalSlider_01.value()
+        self.ui.Edit_radius.setText(f"{str(int(self.radius_given/1024*self.processParameters.xrng))}")
+        self.ui.circ_resample_btn.clicked.connect(self.resample)
+        self.status = " (View Image)"
+        self.ui.label.setText(self._translate("MainWindow", "Status: VisOCT Explorer"+self.status))
+        #self.ui.oct_label.setText(self._translate("MainWindow", "Min value: "+str(round(self.lowVal,3))))
+        #self.ui.oct_label2.setText(self._translate("MainWindow", "Max value: "+str(round(self.highVal,3))))
+        self.ui.oct_contrast_Slider.setEnabled(True)
+        #slider_low = 
+        self.ui.oct_contrast_Slider.setValue((int(self.lowVal),int(self.highVal)))
+        self.ui.Edit_min.setText(str(round(int(self.lowVal),3)))
+        self.ui.Edit_max.setText(str(round(int(self.highVal),3)))
+        self.ui.oct_contrast_Slider.valueChanged.connect(self.contrast)
+        self.ui.pushButton_4.setEnabled(True)
+        self.ui.fibergram_btn.setEnabled(True)
+        self.ui.circ_btn.setEnabled(True)
+        self.ui.octa_btn.setEnabled(True)
+        self.ui.averaging_btn.setEnabled(True)
+        self.ui.enface_otherdim.setEnabled(True)
+        self.ui.flatten_btn.setEnabled(True)
+        self.ui.averaging_btn.clicked.connect(self.update_volume)
+
+        if self.processParameters.octaFlag:
+            self.octa_enface_pixmap = np.array(Image.open(directory+"/octa_enface.tiff"))
+            self.ui.OCTA_Enface.clear()
+            octa_enface = pg.ImageItem(np.fliplr(np.flipud(self.octa_enface_pixmap)))
+            #if self.octa_enface_pixmap.shape[1] == 512:
+            octa_enface.setRect(0,0,1024,1024)
+            #octa_enface.setRect(0,0,512,512)
+            self.octa_enface_lowVal = 0
+            self.octa_enface_highVal = 255
+            self.octa_step = float(octa_highVal-octa_lowVal)/100
+            self.octa_lowVal_base = octa_lowVal#-10*self.octa_step
+            self.octa_lowVal = octa_lowVal#-10*self.octa_step
+            self.octa_highVal_base = octa_highVal
+            self.octa_highVal = octa_highVal
+            octa_log_histo = QPixmap(directory+"\log_scale_octa_contrast.tiff")
+            octa_log_histo = octa_log_histo.scaledToWidth(402)
+            self.ui.contrast_histogram_widget_octa.setPixmap(octa_log_histo)
+            
+            self.ui.OCTA_Enface.addItem(octa_enface,clear = True)
+            self.ui.octa_btn.setEnabled(True)
+            #self.ui.tsa_btn_1.setEnabled(True)
+            #self.ui.tsa_btn_2.setEnabled(True)
+            
+            octa_red_line = pg.InfiniteLine(pos=512,angle=0,movable=True,pen=pg.mkPen('b',width=5))
+            octa_red_line.setBounds([0,1024])
+            self.ui.OCTA_Enface.addItem(octa_red_line)
+            octa_red_line.sigDragged.connect(self.OCTA_Enface_red_dragged)
+            self.octa_red_line = octa_red_line
+            self.octa_slow_axis_img_np = ((np.clip((frame_OCTA[:,:,int(self.frame_OCTA.shape[2]/2)] - self.octa_lowVal_base) / (self.octa_highVal_base - self.octa_lowVal_base), 0, 1)) * 255).astype(np.uint8)
+            print(self.octa_slow_axis_img_np)
+            self.octa_slow_axis_img = pg.ImageItem(np.flipud(np.rot90(self.octa_slow_axis_img_np)))
+            self.octa_slow_axis_img.setRect(0,0,1024,1024)
+            print("slow axis geometry is:",self.ui.OCTA_Slow_Axis.geometry().width())
+            self.ui.OCTA_Slow_Axis.clear()
+            self.ui.OCTA_Slow_Axis.addItem(self.octa_slow_axis_img, clear=True)
+            self.ui.OCTA_Slow_Axis.setImageSize(self.processParameters,self.ui.distance,self.ui.OCTA_Slow_Axis.geometry(),1024)
+            self.cur_octa_img_slow_no = int(self.frame_OCTA.shape[2]/2)
+            self.ui.OCTA_Slow_Axis.setBscan_number(int(self.frame_OCTA.shape[2]/2))
+            self.ui.bscan_number_label_octa.setText(self._translate("MainWindow", "B-scan #: "+str(self.cur_octa_img_slow_no)))
+            self.ui.bscan_dim_label_octa.setText(self._translate("MainWindow","B-scan dimension: (H)1024 x (W)"+str(self.processParameters.res_fast)))
+            #self.ui.octa_save_btn.clicked.connect(self.octa_save_img)
+            #self.ui.octa_zoom_in_btn.clicked.connect(self.octa_go_prev)
+            #self.ui.octa_zoom_out_btn.clicked.connect(self.octa_go_next)
+
+
+    def save_img(self):
+        dialog = MyDialog(self)
+        if dialog.exec() == QDialog.Accepted:
+            selected_option = dialog.get_selected_option()
+            #QMessageBox.information(self,"Selection", f"Selected option: {selected_option}")
+            if selected_option == "Average 32 frames and save":
+                average_number = 32
+            elif selected_option == "Average 16 frames and save":
+                average_number = 16
+            elif selected_option == "Average 8 frames and save":
+                average_number = 8
+            elif selected_option == "Average 4 frames and save":
+                average_number = 4
+            elif selected_option == "Save as dicom":
+                average_number = 1
+            elif selected_option == "Save speckle reduced images":
+                average_number = 1
+            elif selected_option == "Save as tiff stack":
+                average_number = 1
+            
+            self.frame_3D_resh_origin = 20*np.log10(np.load(self.processParameters.fname.split('.RAW')[0]+'/frame_3D.npy'))
+            self.ui.textEdit_2.append("Start to save processed image to file...")
+            self.save_thread = SavingThread(self.processParameters,self.frame_3D_resh_origin,selected_option,self.directory,average_number,self.oct_lowVal,self.oct_highVal)
+            self.save_thread.finished.connect(self.save_finished)
+            self.save_thread.start()
+        #return
+
+    def save_finished(self):
+        self.ui.textEdit_2.append("File saving completed")
+
+    def multiple_measurement_btn_toggle(self):
+        self.ui.Slow_Axis.toggle_multiple_measurement()
+
+    def save_marked_measurement_plot(self):
+        exporter = ImageExporter(self.ui.Slow_Axis)
+        exporter.export('temp.tif')
+
+    def set_note_toggle(self):
+        measure_note = self.ui.measurement_note.toPlainText()
+        self.ui.Slow_Axis.set_measurement_note(measure_note)
+
+    def flip(self):
+        self.flip_bscan = not self.flip_bscan
+        if self.image_ready:
+            if self.flip_bscan:
+                self.ui.Slow_Axis.flipped = True
+                self.ui.Slow_Axis.invertY(True)
+            else:
+                self.ui.Slow_Axis.flipped = False
+                self.ui.Slow_Axis.invertY(False)
+        memory_usage = sys.getsizeof(self.frame_3D_resh)/(1024*1024)
+        print(f"Memory usage of frame_3D_resh: {memory_usage} MB")
+        memory_usage = sys.getsizeof(self.frame_3D_20log)/(1024*1024)
+        print(f"Memory usage of frame_3D_20log: {memory_usage} MB")
+        memory_usage = sys.getsizeof(self.ui)/(1024*1024)
+        print(f"Memory usage of ui: {memory_usage} MB")
+        
+
+    def go_prev(self):
+        if self.cur_img_slow_no > 0:
+            self.cur_img_slow_no -= 1
+            self.slow_axis_img_np = cv2.resize(((np.clip((self.frame_3D_resh[:,:,self.cur_img_slow_no] - self.oct_lowVal) / (self.oct_highVal - self.oct_lowVal), 0, 1)) * 255).astype(np.uint8),(0,0),fx=4,fy=4)
+            self.ui.Slow_Axis.clear()
+            slow_img = pg.ImageItem(np.flipud(np.rot90(self.slow_axis_img_np)))
+            slow_img.setRect(0,0,1024,1024)
+            self.ui.Slow_Axis.addItem(slow_img, clear=True)
+            self.ui.Slow_Axis.reset_measure()
+            self.ui.distance.setText(" ")
+            self.red_line.setValue((self.frame_3D_resh.shape[2]-1-self.cur_img_slow_no)*self.enface_divider*(1024/(self.frame_3D_resh.shape[2]*self.enface_divider)))
+
+    
+    def go_next(self):
+        if self.cur_img_slow_no < self.frame_3D_resh.shape[2]-1:
+            self.cur_img_slow_no += 1
+            self.slow_axis_img_np = cv2.resize(((np.clip((self.frame_3D_resh[:,:,self.cur_img_slow_no] - self.oct_lowVal) / (self.oct_highVal - self.oct_lowVal), 0, 1)) * 255).astype(np.uint8),(0,0),fx=4,fy=4)
+            self.ui.Slow_Axis.clear()
+            slow_img = pg.ImageItem(np.flipud(np.rot90(self.slow_axis_img_np)))
+            slow_img.setRect(0,0,1024,1024)
+            self.ui.Slow_Axis.addItem(slow_img, clear=True)
+            self.ui.Slow_Axis.reset_measure()
+            self.ui.distance.setText(" ")
+            self.red_line.setValue((self.frame_3D_resh.shape[2]-1-self.cur_img_slow_no)*self.enface_divider*(1024/(self.frame_3D_resh.shape[2]*self.enface_divider)))
+
+    def octa_save_img(self):
+        image = Image.fromarray(((np.clip((self.frame_OCTA[:,:,self.cur_octa_img_slow_no] - self.octa_lowVal) / (self.octa_highVal - self.octa_lowVal), 0, 1)) * 255).astype(np.uint8))
+        image.save(self.directory+'/OCT_Reconstruct_'+str(self.cur_octa_img_slow_no)+'_octa.tiff')
+        return
+
+    def octa_go_prev(self):
+        if self.cur_img_slow_no > 0:
+            self.cur_octa_img_slow_no -= 1
+            self.octa_slow_axis_img_np = ((np.clip((self.frame_OCTA[:,:,self.cur_octa_img_slow_no] - self.octa_lowVal) / (self.octa_highVal - self.octa_lowVal), 0, 1)) * 255).astype(np.uint8)
+            self.ui.OCTA_Slow_Axis.clear()
+            OCTA_slow_img = pg.ImageItem(np.rot90(self.octa_slow_axis_img_np))
+            OCTA_slow_img.setRect(0,0,1024,1024)
+            self.ui.OCTA_Slow_Axis.addItem(OCTA_slow_img, clear=True)
+            self.ui.OCTA_Slow_Axis.reset_measure()
+            self.ui.distance.setText(" ")
+            self.octa_red_line.setValue(self.frame_OCTA.shape[2]-1-self.cur_octa_img_slow_no)
+
+    def octa_go_next(self):
+        if self.cur_img_slow_no < self.frame_OCTA.shape[2]-1:
+            self.cur_octa_img_slow_no += 1
+            self.octa_slow_axis_img_np = ((np.clip((self.frame_OCTA[:,:,self.cur_octa_img_slow_no] - self.octa_lowVal) / (self.octa_highVal - self.octa_lowVal), 0, 1)) * 255).astype(np.uint8)
+            self.ui.OCTA_Slow_Axis.clear()
+            OCTA_slow_img = pg.ImageItem(np.rot90(self.octa_slow_axis_img_np))
+            OCTA_slow_img.setRect(0,0,1024,1024)
+            self.ui.OCTA_Slow_Axis.addItem(OCTA_slow_img, clear=True)
+            self.ui.OCTA_Slow_Axis.reset_measure()
+            self.ui.distance.setText(" ")
+            self.octa_red_line.setValue(self.frame_OCTA.shape[2]-1-self.cur_octa_img_slow_no)
+
+    def Enface_red_dragged(self,obj):
+        if(int(obj.value())> 0 and obj.value() <= 1024): 
+            self.cur_img_slow_no = int(self.frame_3D_resh.shape[2]-(obj.value()/1024)*self.frame_3D_resh.shape[2])
+            self.slow_axis_img_np = cv2.resize(((np.clip((self.frame_3D_resh[:,:,self.cur_img_slow_no] - self.oct_lowVal) / (self.oct_highVal - self.oct_lowVal), 0, 1)) * 255).astype(np.uint8),(0,0),fx=4,fy=4)
+            self.ui.Slow_Axis.clear()
+            slow_img = pg.ImageItem(np.flipud(np.rot90(self.slow_axis_img_np)))
+            slow_img.setRect(0,0,1024,1024)
+            self.ui.Slow_Axis.addItem(slow_img, clear=True)
+            self.ui.Slow_Axis.reset_measure()
+            self.ui.Slow_Axis.setBscan_number(int(self.cur_img_slow_no*4))
+            self.ui.bscan_number_label.setText(self._translate("MainWindow", "B-scan #:"+str(self.cur_img_slow_no*4)))
+            self.ui.distance.setText(" ")
+
+    def OCTA_Enface_red_dragged(self,obj):
+        if(obj.value()> 0 and obj.value() <= 1024): 
+            self.cur_octa_img_slow_no = int(self.frame_OCTA.shape[2]-(obj.value()/1024)*self.frame_3D_resh.shape[2])
+            print(self.cur_octa_img_slow_no)
+            self.octa_slow_axis_img_np = ((np.clip((self.frame_OCTA[:,:,self.cur_octa_img_slow_no] - self.octa_lowVal) / (self.octa_highVal - self.octa_lowVal), 0, 1)) * 255).astype(np.uint8)
+            self.ui.OCTA_Slow_Axis.clear()
+            OCTA_slow_img = pg.ImageItem(np.flipud(np.rot90(self.octa_slow_axis_img_np)))
+            OCTA_slow_img.setRect(0,0,1024,1024)
+            self.ui.OCTA_Slow_Axis.addItem(OCTA_slow_img, clear=True)
+            self.ui.OCTA_Slow_Axis.reset_measure()
+            self.ui.distance.setText(" ")
+
+
+    def octa_set_low(self,value):
+        self.octa_lowVal = value*self.octa_step+self.octa_lowVal_base
+        self.octa_highVal = (self.ui.octa_horizontalSlider_2.value()-75)*self.octa_step+self.octa_highVal_base
+        self.ui.OCTA_Slow_Axis.clear()
+        self.updateImg(self.ui.OCTA_Enface,self.ui.OCTA_Fast_Axis,self.ui.OCTA_Slow_Axis,self.octa_lowVal,self.octa_highVal,True)
+
+
+    def octa_set_high(self,value):
+        self.octa_lowVal = self.ui.octa_horizontalSlider.value()*self.octa_step+self.octa_lowVal_base
+        self.octa_highVal = (value-75)*self.octa_step+self.octa_highVal_base
+        self.ui.OCTA_Slow_Axis.clear()
+        self.updateImg(self.ui.OCTA_Enface,self.ui.OCTA_Fast_Axis,self.ui.OCTA_Slow_Axis,self.octa_lowVal,self.octa_highVal,True)
+
+
+    def updateImg(self,enface,slow_axis,lowVal,highVal,is_octa):
+        if is_octa:
+            slow_axis_img_np = ((np.clip((self.frame_OCTA[:,:,self.cur_octa_img_slow_no] - lowVal) / (highVal - lowVal), 0, 1)) * 255).astype(np.uint8)
+            #self.ui.octa_label.setText(self._translate("MainWindow", "Min value: "+str(round(lowVal,3))))
+            #self.ui.octa_label2.setText(self._translate("MainWindow", "Max value: "+str(round(highVal,3))))
+        else:
+            slow_axis_img_np = ((np.clip((self.frame_3D_resh[:,:,self.cur_img_slow_no] - lowVal) / (highVal - lowVal), 0, 1)) * 255).astype(np.uint8)
+            #self.ui.oct_label.setText(self._translate("MainWindow", "Min value: "+str(round(lowVal,3))))
+            #self.ui.oct_label2.setText(self._translate("MainWindow", "Max value: "+str(round(highVal,3))))
+        
+        OCTA_slow_img = pg.ImageItem(np.flipud(np.rot90(slow_axis_img_np)))
+        OCTA_slow_img.setRect(0,0,1024,1024)
+        slow_axis.clear()
+        slow_axis.addItem(OCTA_slow_img, clear=True)
+        slow_axis.reset_measure()
+        #fast_axis.clear()
+        
+
+    def contrast(self,value):
+        self.oct_lowVal = value[0]#(value[0])*self.oct_step-35#+self.lowVal                                                      #lower lowbound and higher upperbound for bscan
+        self.oct_highVal = value[1]#(value[1])*self.oct_step-35#+self.highVal
+        print("low:",self.oct_lowVal)
+        print("high:",self.oct_highVal)
+        self.ui.Slow_Axis.clear()
+        self.ui.Edit_min.setText(str(round(value[0],3)))
+        self.ui.Edit_max.setText(str(round(value[1],3)))
+        self.updateImg(self.ui.Enface,self.ui.Slow_Axis,self.oct_lowVal,self.oct_highVal,False)
+
+    def contrast_octa(self,value):
+        self.octa_lowVal = (value[0])*self.octa_step+self.octa_lowVal_base                                                      #lower lowbound and higher upperbound for bscan
+        self.octa_highVal = (value[1]-99)*self.octa_step+self.octa_highVal_base
+        print("low:",self.octa_lowVal)
+        print("high:",self.octa_highVal)
+        self.ui.OCTA_Slow_Axis.clear()
+        self.updateImg(self.ui.OCTA_Enface,self.ui.OCTA_Slow_Axis,self.octa_lowVal,self.octa_highVal,True)
+
+
+    def gamma(self):
+        return
+    
+    def select_pixmap(self):
+        
+        dlg2 = QFileDialog()
+        cur_dir = QDir.currentPath()
+        dlg2.setDirectory(cur_dir+r'\Pixel Maps')
+        dlg2.setFileMode(QFileDialog.AnyFile)
+        if dlg2.exec():
+            filenames = dlg2.selectedFiles()
+            f = filenames[0]
+            pixelmap_file = open(cur_dir+"\pixelmap.txt", "w")
+            pixelmap_file.write(f)
+            pixelmap_file.close()
+            #match_Path = filenames[0]
+
+            with open(cur_dir+"/pixelmap.txt", 'r') as file:
+                self.match_Path = str(file.read().rstrip())
+
+            msg_box = QMessageBox()
+            msg_box.setIcon(QMessageBox.Icon.Warning)
+            msg_box.setWindowTitle("You are ready to go")
+            msg_box.setText('Pixel map has been set.')
+            msg_box.exec()
+        else:
+            return
+        #self.select_raw_file()
+        
+    
+    def open_file(self):
+        
+        cur_dir = QDir.currentPath()
+        #with open(cur_dir+"/pixelmap.txt", 'r') as file:
+                #match_Path = str(file.read().rstrip())
+        
+        self.ui.label.setText(self._translate("MainWindow", "Status: VisOCT Explorer(Selecting File...)"))
+        print(cur_dir)
+        dlg = QFileDialog()
+        dlg.setFileMode(QFileDialog.AnyFile)
+        dlg.setNameFilter("*.raw")
+
+        if  self.frame_3D_linear.any() or self.frame_3D_20log.any() or self.frame_3D_resh.any():
+            print("one of them not none")
+
+        filenames = QComboBox()
+        if dlg.exec():
+            filenames = dlg.selectedFiles()
+            #file_path,_ = dlg.getOpenFileName()
+            directory = os.path.dirname(filenames[0])
+            print("file_path:",directory)
+            self.f = filenames[0]
+			
+            self.ui.textEdit_2.setText("File "+self.f+" selected")
+            if "_1.RAW" in self.f or "_2.RAW" in self.f:
+                try:
+                    with open(cur_dir+"/pixelmap.txt", 'r') as file:
+                        self.match_Path = str(file.read().rstrip())
+                            
+                except (IOError,FileNotFoundError):
+                    msg_box = QMessageBox()
+                    msg_box.setIcon(QMessageBox.Icon.Warning)
+                    msg_box.setWindowTitle("Warning")
+                    msg_box.setText('Pixel map not selected yet.\nYou can select an existing pixel map to begin with.\nOr generate one for the current dataset?')
+                    
+                    select_button = QPushButton("Select existing pixel map")
+                    generate_button = QPushButton("Generate new pixel map")
+
+                    select_button.clicked.connect(self.select_pixmap)
+                    generate_button.clicked.connect(self.adaptive_balance)
+
+                    msg_box.addButton(select_button, QMessageBox.AcceptRole)
+                    msg_box.addButton(generate_button, QMessageBox.AcceptRole)
+                    # Connect custom slots to button clicks
+                    #select_button.clicked.connect(lambda: custom_button_handler(custom_button1))
+                    #generate_button.clicked.connect(lambda: custom_button_handler(custom_button2))
+
+                    msg_box.exec()
+                    return
+            else:
+                self.match_Path = "None"
+
+            self.image_ready = False
+            self.ui.open_file_btn.clicked.disconnect(self.open_file)
+            self.ui.open_file_btn.clicked.connect(self.wait_warning)
+            self.ui.stackedWidget.setCurrentIndex(0)
+            self.ui.home_btn.setChecked(True)
+                
+            #self.ui.open_file_btn_1.setChecked(False)
+            #self.ui.open_file_btn_1.setChecked(False)
+
+            #self.ui.video_btn_2.setEnabled(False)
+            self.ui.enface_otherdim.setEnabled(False)
+            self.ui.fibergram_btn.setEnabled(False)
+            self.ui.octa_btn.setEnabled(False)
+            self.ui.circ_btn.setEnabled(False)
+            self.ui.pushButton_4.setEnabled(False)
+            #self.ui.contrast_btn_1.setEnabled(False)
+            #self.ui.contrast_btn_2.setEnabled(False)
+            self.processParameters = processParams(32,self.f, self.match_Path)
+            if self.processParameters.balFlag:
+                self.ui.balancing_label.setText(self._translate("MainWindow", "Balanced: Yes"))
+            else:
+                self.ui.balancing_label.setText(self._translate("MainWindow", "Balanced: No"))
+                
+            self.ui.averaging_dropdown.setText("4")
+            self.ui.filename_label.setText(self._translate("MainWindow", "Filename: "+os.path.basename(self.f)[:-4]))
+            if self.processParameters.octaFlag:
+                self.ui.scan_protocol_label.setText(self._translate("MainWindow", "Scan protocol: OCTA"))
+            elif self.processParameters.SRFlag:
+                self.ui.scan_protocol_label.setText(self._translate("MainWindow", "Scan protocol: SR raster"))
+            else:
+                self.ui.scan_protocol_label.setText(self._translate("MainWindow", "Scan protocol: Raster"))
+            
+            self.ui.textEdit_2.append("Image file load succeed. Processing...")
+            self.progressValue = 0
+            self.ui.progressBar.setValue(self.progressValue)
+            self.status = " (Processing...)"
+            self.ui.label.setText(self._translate("MainWindow", "Status: VisOCT Explorer"+self.status))
+            
+            file_name = "saved_setting.txt"
+            current_directory = os.getcwd()
+            file_path = os.path.join(current_directory, file_name)
+
+            try:
+            # Attempt to open the file for reading
+                with open(file_path, 'r') as file:
+                    content = file.read()
+                    if content.split(",")[4] == "True":
+                        self.preview_mode = True
+                        self.preset_dispersion = float(content.split(",")[5])
+                        self.b_scan_preview_average = int(content.split(",")[6])
+                    else:
+                        self.preview_mode = False
+                        self.preset_dispersion = 0
+                        self.b_scan_preview_average = 0
+
+            except FileNotFoundError:
+                self.preview_mode = False
+                self.preset_dispersion = 0
+                self.b_scan_preview_average = 0
+                
+            self.process.set_attrib(self.processParameters,self.preview_mode,self.preset_dispersion,self.b_scan_preview_average)
+            self.process.start()
+            self.dm_tab = Distance_Measurement_Tab(self.processParameters.excel_fname)
+            self.ui.Slow_Axis.setMeasurement_result_table(self.dm_tab)
+            #self.ui.Fast_Axis.setMeasurement_result_table(self.dm_tab)
+            self.ui.dm_table.clicked.connect(self.show_dm_tab)
+
+        #cur_dir = QDir.currentPath()
+        
+                #here
+            
+
+    def show_dm_tab(self):
+        self.dm_tab.show()
+        self.dm_tab.raise_()
+
+    def wait_warning(self):
+        msg_box = QMessageBox()
+        msg_box.setIcon(QMessageBox.Icon.Warning)
+        msg_box.setWindowTitle("Warning")
+        msg_box.setText("Please wait until current processing to be finished!")
+        msg_box.exec()
+
+    def set_pixel_map(self):
+        dlg2 = QFileDialog()
+        cur_dir = QDir.currentPath()
+        dlg2.setDirectory(cur_dir+r'\Pixel Maps')
+        dlg2.setFileMode(QFileDialog.AnyFile)
+        if dlg2.exec():
+            filenames = dlg2.selectedFiles()
+            f = filenames[0]
+            pixelmap_file = open(cur_dir+"\pixelmap.txt", "w")
+            pixelmap_file.write(f)
+            pixelmap_file.close()
+
+    def updateProgress(self,progress_num):
+        if progress_num == 0:
+            self.progressValue = 0
+            self.ui.progressBar.setValue(0)
+        if progress_num == 1:
+            self.progressValue += 1
+            self.ui.progressBar.setValue(int(self.progressValue))
+        if progress_num == 2:
+            self.progressValue += 2.5
+            self.ui.progressBar.setValue(int(self.progressValue))
+        if progress_num == 3:
+            self.progressValue += 0.4
+            self.ui.progressBar.setValue(int(self.progressValue))
+        if progress_num == 4:
+            self.progressValue += 6
+            self.ui.progressBar.setValue(int(self.progressValue))
+        if progress_num == 5:
+            self.progressValue += 16./self.processParameters.res_slow
+            self.ui.progressBar.setValue(int(self.progressValue))
+        if progress_num == 6:
+            self.progressValue += 5
+            self.ui.progressBar.setValue(int(self.progressValue))
+        if progress_num == 7:
+            self.ui.progressBar.setValue(100)
+
+    def progress_callback(self,progress, time=0):
+        scroll_bar = self.ui.textEdit_2.verticalScrollBar()
+        if progress == 0:
+            self.ui.textEdit_2.append("Balancing fringes...")
+            scroll_bar.setValue(scroll_bar.maximum())
+        if progress == 1:
+            self.ui.textEdit_2.append("Fringes balancing completed. Time used: "+str(time))
+            scroll_bar.setValue(scroll_bar.maximum())
+        if progress == 2:
+            self.ui.textEdit_2.append("Resampled to linear in k")
+            scroll_bar.setValue(scroll_bar.maximum())
+        if progress == 3:
+            self.ui.textEdit_2.append("Starting dispersion compensation...")
+            scroll_bar.setValue(scroll_bar.maximum())
+        if progress == 4:
+            self.ui.textEdit_2.append("Dispersion compensated. Time used: "+str(time))
+            scroll_bar.setValue(scroll_bar.maximum())
+        if progress == 5:
+            self.ui.textEdit_2.append("Starting OCT reconstruction...")
+            scroll_bar.setValue(scroll_bar.maximum())
+        if progress == 6:
+            self.ui.textEdit_2.append("OCT Reconstruction completed. Time used: "+str(time))
+            scroll_bar.setValue(scroll_bar.maximum())
+        if progress == 7:
+            self.ui.textEdit_2.append("Starting image registration...")
+            scroll_bar.setValue(scroll_bar.maximum())
+        if progress == 8:
+            self.ui.textEdit_2.append("Image Registration completed. Time used: "+str(time))
+            scroll_bar.setValue(scroll_bar.maximum())
+        if progress == 17:
+            self.ui.textEdit_2.append("Adjusting contrast...")
+            scroll_bar.setValue(scroll_bar.maximum())
+        if progress == 18:
+            self.ui.textEdit_2.append("Min/max pixel value calculated.")
+            scroll_bar.setValue(scroll_bar.maximum())
+        if progress == 9:
+            #self.ui.textEdit_2.append("Start processing B-scan fly through video...")
+            scroll_bar.setValue(scroll_bar.maximum())
+            
+            if self.processParameters.octaFlag:
+                self.ui.octa_contrast_Slider.setEnabled(True)
+                self.ui.octa_contrast_Slider.valueChanged.connect(self.contrast_octa)
+            #self.ui.horizontalSlider_2.setEnabled(True)
+            #self.ui.horizontalSlider_2.valueChanged.connect(self.brightness)
+        if progress == 10:
+            self.ui.textEdit_2.append("Reconstruction completed and ready to be viewed")
+            scroll_bar.setValue(scroll_bar.maximum())
+            self.ui.open_file_btn.clicked.disconnect(self.wait_warning)
+            self.ui.open_file_btn.clicked.connect(self.open_file)
+
+            #if self.processParameters.octaFlag:
+                #self.ui.tsa_btn_1.setEnabled(True)
+                #self.ui.tsa_btn_2.setEnabled(True)
+            
+            self.ui.circ_btn.setEnabled(True)
+            self.ui.pixel_map_btn.setEnabled(True)
+
+
+
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    ## loading style file
+    # with open("style.qss", "r") as style_file:
+    #     style_str = style_file.read()
+    # app.setStyleSheet(style_str)
+
+    #style_file = QFile("style.qss")
+    #style_file.open(QFile.ReadOnly | QFile.Text)
+    #style_stream = QTextStream(style_file)
+    #app.setStyleSheet(style_stream.readAll())
+
+
+    window = MainWindow()
+    window.show()
+
+    sys.exit(app.exec())
