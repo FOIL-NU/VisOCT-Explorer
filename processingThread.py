@@ -187,7 +187,7 @@ class ProcessingThread(QThread):
             else:
                 processParameters = self.processParameters
         
-            raw_fringes = fringes(processParameters.fname,processParameters,processParameters.pixelMap,preview_mode = self.preview_mode,preview_bscans=self.preview_bscans)
+            raw_fringes = fringes(processParameters.fname,processParameters,processParameters.pixelMap)
             
             class data:
                 pass
