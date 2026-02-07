@@ -10,6 +10,7 @@ try:
     #from scipy import interpolate
     #from univariatespline import InterpolatedUnivariateSpline
     from cupyx.scipy import interpolate
+    from cupyx.scipy.signal import hilbert
 except ValueError:
     GPU_available = False
 
@@ -103,10 +104,6 @@ class fringes:
         raw2 = cp.array(self.__loadRawFringes(self.file2,offsetAmt,chunkSz))
 
         startime = time.time()
-        #raw1Inter = cp.zeros(cp.shape(raw1))
-
-        #raw1Interp = CubicSpline(cp.arange(1,cp.shape(raw1)[1]+1),raw1,axis=1)
-        #raw1Inter = raw1Interp(interpMat)
 
         raw1Inter = interpolate.pchip_interpolate(cp.arange(1,cp.shape(raw1)[1]+1),raw1,interpMat,axis=1)
 
@@ -115,11 +112,19 @@ class fringes:
         ratio = background2/background1
 
         raw = raw1Inter*ratio - raw2
-        #raw = raw1Inter
-        #raw = raw2-background2
 
         raw[:,interpMat<=0] = 0
         raw[:,interpMat>=2047] = 0
+
+        if self.processParams.envelop:
+            envelop = cp.zeros_like(raw)
+            for i in range(cp.shape(raw)[0]):
+                aline = raw[i,:]
+                envelop[i,:] = cp.abs(hilbert(aline))
+            envelop_avg = cp.mean(envelop,axis=0)
+            raw = raw/envelop_avg
+            del envelop
+
         endtime = time.time()
         print(round(endtime-startime,2))
         del raw1
@@ -127,40 +132,7 @@ class fringes:
         del interpMat
         gc.collect()
         return raw
-        
-        '''
-        if interpMat is None:
-            interpMat = self.interpMat
-        raw1 = np.array(self.__loadRawFringes(self.file1,offsetAmt,chunkSz))
-        raw2 = np.array(self.__loadRawFringes(self.file2,offsetAmt,chunkSz))
 
-        startime = time.time()
-        #raw1Interp = cp.zeros(cp.shape(raw1))
-        print(cp.shape(raw1[1]))
-        raw1Interp = interpolate.CubicSpline(np.arange(np.shape(raw1)[1]),raw1[1])
-        raw1Inter = raw1Interp(interpMat)
-        for i in raw1Inter:
-            print("i is:",i)
-        background1 = np.mean(raw1Inter, axis=0)
-        background2 = np.mean(raw2,axis=0)
-        plt.plot(raw1Inter)
-        plt.show()
-        ratio = background2/background1
-
-        raw = raw1Inter * ratio - raw2
-
-        #print("raw shape:",cp.shape(raw))
-        raw[:,interpMat<=0] = 0
-        raw[:,interpMat>=2047] = 0
-        #print("raw min",cp.min(raw))
-        endtime = time.time()
-        print(round(endtime-startime,2))
-        #del raw1
-        #del raw2
-        #del interpMat
-        #gc.collect()
-        return raw
-        '''
 
     def __balanceFringes(self,offsetAmt,chunkSz):
         """

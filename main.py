@@ -24,6 +24,7 @@ from volumerender import *
 from enface_3D import *
 from fibergram import *
 from setting import *
+from open_file import OpenFileDialog
 from glass_flatten import *
 from UpdateVolume import *
 
@@ -57,8 +58,6 @@ class MyDialog(QDialog):
             self.dropdown.addItem("Save as tiff stack")
             self.dropdown.addItem("Save as dicom")
             layout.addWidget(self.dropdown)
-
-        # Create the OK button
 
         
         ok_button = QPushButton("OK", self)
@@ -120,7 +119,9 @@ class MainWindow(QMainWindow):
         self.ui.enface_otherdim.clicked.connect(self.openEnface_3D)
         self.ui.set_rindex_btn.clicked.connect(self.set_rindex)
         self.ui.pushButton_4.clicked.connect(self.openRendererWindow)
-
+        self.ui.tsa_btn.clicked.connect(self.TSA_processing)
+        self.dialog = None
+        self.open_file_dialog = OpenFileDialog()
         file_name = "saved_setting.txt"
         current_directory = os.getcwd()
         file_path = os.path.join(current_directory, file_name)
@@ -422,7 +423,6 @@ class MainWindow(QMainWindow):
         self.ui.progressBar_circ.setValue(prog_val)
         
     def resample_ready_callback(self,frame_3D,start_coord,end_coord):
-        print(9)
         self.ui.circ_Slow_Axis.clear()
         self.circ_step = 0.1
         #print(end_coord)
@@ -539,9 +539,23 @@ class MainWindow(QMainWindow):
         self.ui.distance.setText(" ")
         self.red_line.setValue(512)
 
+    def oct_enface_contrast(self,value):
+        img_pil = Image.open(self.directory+"/enface.tiff").convert("RGB")
+        #enhancer = ImageEnhance.Contrast(img_pil)
+        gamma = (value+1)/33
+        arr = np.array(img_pil, dtype=np.float32) / 255.0
+        arr_gamma = np.power(arr, gamma)
+
+        # Convert back to uint8 and rotate
+        arr_gamma_uint8 = (arr_gamma * 255).astype(np.uint8)
+        enface_pixmap = np.rot90(arr_gamma_uint8)
+        self.enface.setImage(enface_pixmap)
+
     def image_ready_callback(self,frame_3D_resh,directory,lowVal,highVal,QI,frame_OCTA=None,octa_lowVal=None,octa_highVal=None):
         self.frame_3D_20log = np.float32(20*np.log10(frame_3D_resh))
         self.frame_3D_resh = self.frame_3D_20log
+        if self.dialog is None:
+            self.dialog = MyDialog(self)
         
         self.linear_scale = False
         #for q in QI:
@@ -574,9 +588,9 @@ class MainWindow(QMainWindow):
             self.enface_height = enface_pixmap.shape[1]
             self.enface_width = enface_pixmap.shape[0]
 
-            enface = pg.ImageItem(np.fliplr(enface_pixmap))
+            self.enface = pg.ImageItem(np.fliplr(enface_pixmap))
             self.circ_enface = pg.ImageItem(np.fliplr(enface_pixmap))
-            enface.setRect(0,0,1024,1024)
+            self.enface.setRect(0,0,1024,1024)
             self.circ_enface.setRect(0,0,1024,1024)
             self.enface_lowVal = np.min(enface_pixmap)
             self.enface_highVal = np.max(enface_pixmap)
@@ -647,6 +661,9 @@ class MainWindow(QMainWindow):
         self.ui.save_btn.clicked.connect(self.save_img)
         self.ui.next_frame_btn.clicked.connect(self.go_prev)
         self.ui.prev_frame_btn.clicked.connect(self.go_next)
+        self.ui.Enface_contrast.setEnabled(True)
+        self.ui.Enface_contrast.valueChanged.connect(self.oct_enface_contrast)
+
         self.radius_given = self.ui.horizontalSlider_01.value()
         self.ui.Edit_radius.setText(f"{str(int(self.radius_given/1024*self.processParameters.xrng))}")
         self.ui.circ_resample_btn.clicked.connect(self.resample)
@@ -667,6 +684,7 @@ class MainWindow(QMainWindow):
         self.ui.averaging_btn.setEnabled(True)
         self.ui.enface_otherdim.setEnabled(True)
         self.ui.flatten_btn.setEnabled(True)
+        self.ui.tsa_btn.setEnabled(True)
         self.ui.averaging_btn.clicked.connect(self.update_volume)
 
         if self.processParameters.octaFlag:
@@ -715,9 +733,8 @@ class MainWindow(QMainWindow):
 
 
     def save_img(self):
-        dialog = MyDialog(self)
-        if dialog.exec() == QDialog.Accepted:
-            selected_option = dialog.get_selected_option()
+        if self.dialog.exec() == QDialog.Accepted:
+            selected_option = self.dialog.get_selected_option()
             #QMessageBox.information(self,"Selection", f"Selected option: {selected_option}")
             if selected_option == "Average 32 frames and save":
                 average_number = 32
@@ -934,30 +951,14 @@ class MainWindow(QMainWindow):
         
     
     def open_file(self):
-        
-        cur_dir = QDir.currentPath()
-        #with open(cur_dir+"/pixelmap.txt", 'r') as file:
-                #match_Path = str(file.read().rstrip())
-        
         self.ui.label.setText(self._translate("MainWindow", "Status: VisOCT Explorer(Selecting File...)"))
-        print(cur_dir)
-        dlg = QFileDialog()
-        dlg.setFileMode(QFileDialog.AnyFile)
-        dlg.setNameFilter("*.raw")
+        cur_dir = QDir.currentPath()
 
-        if  self.frame_3D_linear.any() or self.frame_3D_20log.any() or self.frame_3D_resh.any():
-            print("one of them not none")
-
-        filenames = QComboBox()
-        if dlg.exec():
-            filenames = dlg.selectedFiles()
-            #file_path,_ = dlg.getOpenFileName()
-            directory = os.path.dirname(filenames[0])
-            print("file_path:",directory)
-            self.f = filenames[0]
-			
-            self.ui.textEdit_2.setText("File "+self.f+" selected")
-            if "_1.RAW" in self.f or "_2.RAW" in self.f:
+        if self.open_file_dialog.exec():
+            filenames = self.open_file_dialog.path_edit.text()
+            print(filenames)
+            meta_data_dict = {}
+            if "_1.RAW" in filenames or "_2.RAW" in filenames:
                 try:
                     with open(cur_dir+"/pixelmap.txt", 'r') as file:
                         self.match_Path = str(file.read().rstrip())
@@ -969,16 +970,10 @@ class MainWindow(QMainWindow):
                     msg_box.setText('Pixel map not selected yet.\nYou can select an existing pixel map to begin with.\nOr generate one for the current dataset?')
                     
                     select_button = QPushButton("Select existing pixel map")
-                    generate_button = QPushButton("Generate new pixel map")
 
                     select_button.clicked.connect(self.select_pixmap)
-                    generate_button.clicked.connect(self.adaptive_balance)
 
                     msg_box.addButton(select_button, QMessageBox.AcceptRole)
-                    msg_box.addButton(generate_button, QMessageBox.AcceptRole)
-                    # Connect custom slots to button clicks
-                    #select_button.clicked.connect(lambda: custom_button_handler(custom_button1))
-                    #generate_button.clicked.connect(lambda: custom_button_handler(custom_button2))
 
                     msg_box.exec()
                     return
@@ -989,27 +984,44 @@ class MainWindow(QMainWindow):
             self.ui.open_file_btn.clicked.disconnect(self.open_file)
             self.ui.open_file_btn.clicked.connect(self.wait_warning)
             self.ui.stackedWidget.setCurrentIndex(0)
-            self.ui.home_btn.setChecked(True)
                 
-            #self.ui.open_file_btn_1.setChecked(False)
-            #self.ui.open_file_btn_1.setChecked(False)
-
-            #self.ui.video_btn_2.setEnabled(False)
             self.ui.enface_otherdim.setEnabled(False)
             self.ui.fibergram_btn.setEnabled(False)
             self.ui.octa_btn.setEnabled(False)
             self.ui.circ_btn.setEnabled(False)
             self.ui.pushButton_4.setEnabled(False)
-            #self.ui.contrast_btn_1.setEnabled(False)
-            #self.ui.contrast_btn_2.setEnabled(False)
-            self.processParameters = processParams(32,self.f, self.match_Path)
+
+            if "Bal" in filenames:
+                from_fname = True
+                meta_data_dict["envelop"] = self.open_file_dialog.enable_extraction.isChecked()
+                meta_data_dict["pixel"] = str(self.open_file_dialog.path_edit_pixmap.text())
+            else:
+                from_fname = False
+                meta_data_dict["envelop"] = self.open_file_dialog.enable_extraction.isChecked()
+                meta_data_dict["balanced"] = self.open_file_dialog.balanced_rb.isChecked()
+                meta_data_dict["bidirection"] = self.open_file_dialog.bi_rb.isChecked()
+                meta_data_dict["pixel"] = str(self.open_file_dialog.path_edit_pixmap.text())
+                meta_data_dict["res_axis"] = int(self.open_file_dialog.axis_input.text())
+                meta_data_dict["res_fast"] = int(self.open_file_dialog.aline_input.text())
+                meta_data_dict["res_slow"] = int(self.open_file_dialog.bscan_input.text())
+                meta_data_dict["repNum"] = int(self.open_file_dialog.bscan_rep_input.text())
+                meta_data_dict["volNum"] = int(self.open_file_dialog.volume_input.text())
+                meta_data_dict["xrng"] = int(self.open_file_dialog.scan_range_x_input.text())
+                meta_data_dict["yrng"] = int(self.open_file_dialog.scan_range_y_input.text())
+
+            pixelmap_file = open(cur_dir+"\pixelmap.txt", "w")
+            pixelmap_file.write(meta_data_dict["pixel"])
+            pixelmap_file.close()
+            self.processParameters = processParams(32,filenames, from_fname, meta_data_dict, self.match_Path)
+
             if self.processParameters.balFlag:
                 self.ui.balancing_label.setText(self._translate("MainWindow", "Balanced: Yes"))
             else:
                 self.ui.balancing_label.setText(self._translate("MainWindow", "Balanced: No"))
                 
             self.ui.averaging_dropdown.setText("4")
-            self.ui.filename_label.setText(self._translate("MainWindow", "Filename: "+os.path.basename(self.f)[:-4]))
+            self.ui.filename_label.setText(self._translate("MainWindow", "Filename: "+os.path.basename(filenames)[:-4]))
+
             if self.processParameters.octaFlag:
                 self.ui.scan_protocol_label.setText(self._translate("MainWindow", "Scan protocol: OCTA"))
             elif self.processParameters.SRFlag:
@@ -1026,35 +1038,13 @@ class MainWindow(QMainWindow):
             file_name = "saved_setting.txt"
             current_directory = os.getcwd()
             file_path = os.path.join(current_directory, file_name)
-
-            try:
-            # Attempt to open the file for reading
-                with open(file_path, 'r') as file:
-                    content = file.read()
-                    if content.split(",")[4] == "True":
-                        self.preview_mode = True
-                        self.preset_dispersion = float(content.split(",")[5])
-                        self.b_scan_preview_average = int(content.split(",")[6])
-                    else:
-                        self.preview_mode = False
-                        self.preset_dispersion = 0
-                        self.b_scan_preview_average = 0
-
-            except FileNotFoundError:
-                self.preview_mode = False
-                self.preset_dispersion = 0
-                self.b_scan_preview_average = 0
                 
-            self.process.set_attrib(self.processParameters,self.preview_mode,self.preset_dispersion,self.b_scan_preview_average)
+            self.process.set_attrib(self.processParameters)
             self.process.start()
             self.dm_tab = Distance_Measurement_Tab(self.processParameters.excel_fname)
             self.ui.Slow_Axis.setMeasurement_result_table(self.dm_tab)
             #self.ui.Fast_Axis.setMeasurement_result_table(self.dm_tab)
             self.ui.dm_table.clicked.connect(self.show_dm_tab)
-
-        #cur_dir = QDir.currentPath()
-        
-                #here
             
 
     def show_dm_tab(self):

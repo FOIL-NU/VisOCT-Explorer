@@ -41,7 +41,7 @@ class processParams:
 
     
 
-    def __init__(self,chunks,file_path,match_path=None):
+    def __init__(self,chunks,file_path,from_fname=True,meta_data_dict=None,match_path=None):
         """
         Initialize the processParams object
 
@@ -60,98 +60,125 @@ class processParams:
         """
         self.chunks = chunks
         self.eye = 3
+        self.envelop = meta_data_dict["envelop"]
+        self.match_path = meta_data_dict["pixel"]
         
+        if from_fname:
+            dir0 = os.path.dirname(file_path)                                                       # Extract file directory
+            fname = os.path.basename(file_path)                                                    # Extract file name from path
+            if match_path!=None:
+                fname = fname[0:(len(fname)-4)]
 
-        dir0 = os.path.dirname(file_path)                                                       # Extract file directory
-        fname = os.path.basename(file_path)                                                    # Extract file name from path
-        if match_path!=None:
-            fname = fname[0:(len(fname)-4)]
+            self.excel_fname = dir0+'/Measurements/'+fname 
+            
+            self.adaptive_pix_map = fname+'_pixelMap'                                                    # Remove file extension
 
-        self.excel_fname = dir0+'/Measurements/'+fname 
-        
-        self.adaptive_pix_map = fname+'_pixelMap'                                                    # Remove file extension
+            fileInfo = fname.split('_')                                                            # parse filename for scan parameters
+            self.fname = f"{dir0}{'/'}{fname}{'.RAW'}"
+            print(fname)
+            self.human = False
+            if 'OD' in fileInfo:
+                self.eye = 0
+                self.human = True
+            if 'OS' in fileInfo:
+                self.eye = 1
+                self.human = True
+            
 
-        fileInfo = fname.split('_')                                                            # parse filename for scan parameters
-        self.fname = f"{dir0}{'/'}{fname}{'.RAW'}"
-        self.human = False
-        if 'OD' in fileInfo:
-            self.eye = 0
-            self.human = True
-        if 'OS' in fileInfo:
-            self.eye = 1
-            self.human = True
-        
-
-        if 'SR' in fileInfo:
-            self.SRFlag = 1
-            self.newSRFlag = 1 if 'New' in fileInfo else 0
-        else:
-            self.SRFlag = 0
-            self.newSRFlag = 0
-        # Determine if file is balanced
-        if 'Bal' in fileInfo:
-            print(65535)
-            self.balFlag = 1
-            bal_index = fileInfo.index('Bal')
-            self.hr = int(fileInfo[bal_index+1])
-            self.min = int(fileInfo[bal_index+2])
-            self.sec = int(fileInfo[bal_index+3])
-            self.res_fast = int(fileInfo[bal_index+4])                                              # number A-lines along fast axis
-            self.res_slow = int(fileInfo[bal_index+5])                                              # number A-lines along slow axis
-            self.xrng = [float(s) for s in re.findall(r'-?\d+\.?\d*', fileInfo[bal_index+7])][0]    # x range in um
-            self.yrng = [float(s) for s in re.findall(r'-?\d+\.?\d*', fileInfo[bal_index+8])][0]    # y range in um
-            if 'Angio' in fileInfo:
-                self.octaFlag = 1
-                #self.repNum = int(fileInfo[bal_index+11])
-                #self.volNum = int(fileInfo[bal_index+13])
+            if 'SR' in fileInfo:
+                self.SRFlag = 1
+                self.newSRFlag = 1 if 'New' in fileInfo else 0
+            else:
+                self.SRFlag = 0
+                self.newSRFlag = 0
+            # Determine if file is balanced
+            if 'Bal' in fileInfo:
+                print(65535)
+                self.balFlag = 1
+                bal_index = fileInfo.index('Bal')
+                self.hr = int(fileInfo[bal_index+1])
+                self.min = int(fileInfo[bal_index+2])
+                self.sec = int(fileInfo[bal_index+3])
                 self.res_fast = int(fileInfo[bal_index+4])                                              # number A-lines along fast axis
                 self.res_slow = int(fileInfo[bal_index+5])                                              # number A-lines along slow axis
                 self.xrng = [float(s) for s in re.findall(r'-?\d+\.?\d*', fileInfo[bal_index+7])][0]    # x range in um
                 self.yrng = [float(s) for s in re.findall(r'-?\d+\.?\d*', fileInfo[bal_index+8])][0]    # y range in um
-                self.repNum = int(fileInfo[bal_index+10])
-                self.volNum = int(fileInfo[bal_index+12])
-            else:
-                self.repNum = 2
-                self.octaFlag = 0
-
-        else:
-            self.balFlag = 0
-            self.hr = 0
-            self.min = 0
-            self.sec = 0
-            if 'Angio' in fileInfo or 'OCTA' in fileInfo:
-                if 'OCTA' in fileInfo:
-                    self.balFlag = 0
+                if 'Angio' in fileInfo:
+                    self.octaFlag = 1
+                    #self.repNum = int(fileInfo[bal_index+11])
+                    #self.volNum = int(fileInfo[bal_index+13])
+                    self.res_fast = int(fileInfo[bal_index+4])                                              # number A-lines along fast axis
+                    self.res_slow = int(fileInfo[bal_index+5])                                              # number A-lines along slow axis
+                    self.xrng = [float(s) for s in re.findall(r'-?\d+\.?\d*', fileInfo[bal_index+7])][0]    # x range in um
+                    self.yrng = [float(s) for s in re.findall(r'-?\d+\.?\d*', fileInfo[bal_index+8])][0]    # y range in um
+                    self.repNum = int(fileInfo[bal_index+10])
+                    self.volNum = int(fileInfo[bal_index+12])
                 else:
-                    self.balFlag = 0
-                self.octaFlag = 1
-                self.repNum = 2                 #OCTA temp
-                self.volNum = 5                 #Filename does not contain the information needed
-                self.res_fast = 512             #Information hard coded for now
-                self.res_slow = 512             #Change in future
-                self.xrng = 1000
-                self.yrng = 1000
-            else:
-                print(fileInfo[7])
-                self.octaFlag = 0
-                self.res_fast = int(fileInfo[5])                                              # number A-lines along fast axis
-                self.res_slow = int(fileInfo[6])                                              # number A-lines along slow axis
-                self.xrng = [float(s) for s in re.findall(r'-?\d+\.?\d*', fileInfo[8])][0]       # x range in um
-                self.yrng = [float(s) for s in re.findall(r'-?\d+\.?\d*', fileInfo[9])][0]       # y range in um
-            
+                    self.repNum = 2
+                    self.octaFlag = 0
 
-        # Determine scan parameter
-        if 'Rect' in fileInfo:
-            self.scanMode = 'raster'
-        elif 'Circ' in fileInfo:
-            self.scanMode = 'circ'
+            else:
+                self.balFlag = 0
+                self.hr = 0
+                self.min = 0
+                self.sec = 0
+                if 'Angio' in fileInfo or 'OCTA' in fileInfo:
+                    if 'OCTA' in fileInfo:
+                        self.balFlag = 0
+                    else:
+                        self.balFlag = 0
+                    self.octaFlag = 1
+                    self.repNum = 2                 #OCTA temp
+                    self.volNum = 5                 #Filename does not contain the information needed
+                    self.res_fast = 512             #Information hard coded for now
+                    self.res_slow = 512             #Change in future
+                    self.xrng = 1000
+                    self.yrng = 1000
+                else:
+                    print(fileInfo[7])
+                    self.octaFlag = 0
+                    self.res_fast = int(fileInfo[5])                                              # number A-lines along fast axis
+                    self.res_slow = int(fileInfo[6])                                              # number A-lines along slow axis
+                    self.xrng = [float(s) for s in re.findall(r'-?\d+\.?\d*', fileInfo[8])][0]       # x range in um
+                    self.yrng = [float(s) for s in re.findall(r'-?\d+\.?\d*', fileInfo[9])][0]       # y range in um
+                
+
+            # Determine scan parameter
+            if 'Rect' in fileInfo:
+                self.scanMode = 'raster'
+            elif 'Circ' in fileInfo:
+                self.scanMode = 'circ'
+                
             
+            if self.newSRFlag:
+                self.totalBnum = self.res_slow
+                self.numAvgs = int(os.stat(self.fname).st_size/(self.res_fast*self.res_slow*2*self.res_axis))
+                self.res_slow = self.numAvgs*self.res_slow
+                self.totalNumberOfAlines = int(os.stat(self.fname).st_size/(2*self.res_axis))
+            self.backLash = 0
+            self.dispersion = 0
+            if self.yrng == 0:
+                self.yrng = 1
+        # process parameter not from file name
+        else:
+            self.balFlag = meta_data_dict["balanced"]
+            self.scanMode = meta_data_dict["bidirection"]
+            self.repNum = meta_data_dict["repNum"]
+            self.volNum = meta_data_dict["volNum"]
+            self.res_axis = meta_data_dict["res_axis"]
+            self.res_fast = meta_data_dict["res_fast"]
+            self.res_slow = meta_data_dict["res_slow"]
+            self.xrng = meta_data_dict["xrng"]
+            self.yrng = meta_data_dict["yrng"]
+            if self.yrng == 0:
+                self.yrng = 1
+
         if match_path != None:
             self.match_path = match_path.encode('ascii')
             if match_path == "within":
                 with open(self.fname.split('.RAW')[0][0:(len(self.fname)-5)]+'1.RAW','rb') as f:
                     f.seek(-16 * 1024, 2)  # 2 means seek from the end
-                    # Read the last 16 KB
+                        # Read the last 16 KB
                     b = f.read()
 
                     self.pixelMap = np.frombuffer(b).copy()
@@ -173,13 +200,3 @@ class processParams:
                 self.pixelMap = np.asarray(scipy.io.loadmat(match_path).get('hold_max')[0])
 
         self.totalNumberOfAlines = (self.res_fast*self.res_slow*self.repNum) if self.octaFlag else (self.res_fast*self.res_slow)
-        if self.newSRFlag:
-            self.totalBnum = self.res_slow
-            self.numAvgs = int(os.stat(self.fname).st_size/(self.res_fast*self.res_slow*2*self.res_axis))
-            self.res_slow = self.numAvgs*self.res_slow
-            self.totalNumberOfAlines = int(os.stat(self.fname).st_size/(2*self.res_axis))
-        self.backLash = 0
-        self.dispersion = 0
-        print("res fast:",self.res_fast)
-        if self.yrng == 0:
-            self.yrng = 1

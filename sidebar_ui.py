@@ -9,7 +9,7 @@
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import Qt,QFile,QTextStream
 from PySide6.QtGui import QCursor,QFont,QIcon,QColor,QPixmap
-from PySide6.QtWidgets import QSpacerItem,QSizePolicy,QPushButton,QMainWindow,QApplication
+from PySide6.QtWidgets import QSpacerItem,QSlider,QPushButton,QMainWindow,QApplication
 import pyqtgraph as pg
 from qtrangeslider import QLabeledRangeSlider,QDoubleRangeSlider
 from PIL import Image,ImageOps
@@ -720,6 +720,14 @@ class Ui_MainWindow(object):
         self.flatten_btn.setIconSize(icon.actualSize(self.flatten_btn.size()))
         self.flatten_btn.setEnabled(False)
         self.horizontalLayout_2.addWidget(self.flatten_btn)
+        icon = QIcon("./icon/product-48.ico")
+        self.tsa_btn = HoverButton()
+        self.tsa_btn.setFixedSize(QtCore.QSize(38, 38))
+        self.tsa_btn.setObjectName("tsa_btn")
+        self.tsa_btn.setIcon(icon)
+        self.tsa_btn.setIconSize(icon.actualSize(self.tsa_btn.size()))
+        self.tsa_btn.setEnabled(False)
+        self.horizontalLayout_2.addWidget(self.tsa_btn)
         spacerItem = QtWidgets.QSpacerItem(40, 20, QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Minimum)
         self.horizontalLayout_2.addItem(spacerItem)
         #self.widget_3 = QtWidgets.QWidget(parent=self.centralwidget)
@@ -1033,6 +1041,12 @@ class Ui_MainWindow(object):
         self.Enface_label.setObjectName("Enface_label")
         self.Enface_label.setFont(font)
         self.Enface_label.setGeometry(QtCore.QRect(420, 0, 50, 12))
+        self.Enface_contrast = QSlider(QtCore.Qt.Orientation.Horizontal, parent=self.page)
+        self.Enface_contrast.setMinimum(0)
+        self.Enface_contrast.setMaximum(100)
+        self.Enface_contrast.setValue(32)
+        self.Enface_contrast.setGeometry(QtCore.QRect(460, 0, 150, 12))
+        self.Enface_contrast.setEnabled(False)
         self.Enface = self.Enface_widget.addPlot()
         #placeholder = np.array(Image.open("./icon/Logo.png"))
         #self.Enface.addItem(pg.ImageItem(placeholder),clear=True)
