@@ -61,7 +61,10 @@ class System_setting(object):
                 self.Edit_depth.setText(content.split(",")[1])
                 self.Edit_upsample.setText(content.split(",")[2])
                 self.Edit_num_chunk.setText(content.split(",")[3])
-                self.enable_extraction.setChecked(True)
+                if content.split(",")[4] == "True":
+                    self.enable_extraction.setChecked(True)
+                else:
+                    self.enable_extraction.setChecked(False)
 
         except FileNotFoundError:
             self.Edit_aline.setText("2048")
