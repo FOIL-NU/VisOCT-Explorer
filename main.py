@@ -605,7 +605,7 @@ class MainWindow(QMainWindow):
         #self.ui.contrast_histogram.setXRange(-100, 10, padding=0)
         #self.ui.contrast_histogram.setYRange(0, 10, padding=0)
         if self.preview_mode != True:
-            self.ui.Enface.addItem(enface,clear = True)
+            self.ui.Enface.addItem(self.enface,clear = True)
         red_line = pg.InfiniteLine(pos=512,angle=0,movable=True,pen=pg.mkPen('blue',width=5))
         red_line.setBounds([0,1024])
         self.ui.Enface.addItem(red_line)
@@ -869,20 +869,6 @@ class MainWindow(QMainWindow):
             self.ui.distance.setText(" ")
 
 
-    def octa_set_low(self,value):
-        self.octa_lowVal = value*self.octa_step+self.octa_lowVal_base
-        self.octa_highVal = (self.ui.octa_horizontalSlider_2.value()-75)*self.octa_step+self.octa_highVal_base
-        self.ui.OCTA_Slow_Axis.clear()
-        self.updateImg(self.ui.OCTA_Enface,self.ui.OCTA_Fast_Axis,self.ui.OCTA_Slow_Axis,self.octa_lowVal,self.octa_highVal,True)
-
-
-    def octa_set_high(self,value):
-        self.octa_lowVal = self.ui.octa_horizontalSlider.value()*self.octa_step+self.octa_lowVal_base
-        self.octa_highVal = (value-75)*self.octa_step+self.octa_highVal_base
-        self.ui.OCTA_Slow_Axis.clear()
-        self.updateImg(self.ui.OCTA_Enface,self.ui.OCTA_Fast_Axis,self.ui.OCTA_Slow_Axis,self.octa_lowVal,self.octa_highVal,True)
-
-
     def updateImg(self,enface,slow_axis,lowVal,highVal,is_octa):
         if is_octa:
             slow_axis_img_np = ((np.clip((self.frame_OCTA[:,:,self.cur_octa_img_slow_no] - lowVal) / (highVal - lowVal), 0, 1)) * 255).astype(np.uint8)
@@ -991,16 +977,15 @@ class MainWindow(QMainWindow):
             self.ui.circ_btn.setEnabled(False)
             self.ui.pushButton_4.setEnabled(False)
 
+            
+            meta_data_dict["envelope"] = str(self.system_setting.enable_extraction.isChecked())
+            meta_data_dict["pixel"] = str(self.open_file_dialog.path_edit_pixmap.text())
             if "Bal" in filenames:
                 from_fname = True
-                meta_data_dict["envelop"] = self.open_file_dialog.enable_extraction.isChecked()
-                meta_data_dict["pixel"] = str(self.open_file_dialog.path_edit_pixmap.text())
             else:
                 from_fname = False
-                meta_data_dict["envelop"] = self.open_file_dialog.enable_extraction.isChecked()
                 meta_data_dict["balanced"] = self.open_file_dialog.balanced_rb.isChecked()
                 meta_data_dict["bidirection"] = self.open_file_dialog.bi_rb.isChecked()
-                meta_data_dict["pixel"] = str(self.open_file_dialog.path_edit_pixmap.text())
                 meta_data_dict["res_axis"] = int(self.open_file_dialog.axis_input.text())
                 meta_data_dict["res_fast"] = int(self.open_file_dialog.aline_input.text())
                 meta_data_dict["res_slow"] = int(self.open_file_dialog.bscan_input.text())
@@ -1008,6 +993,8 @@ class MainWindow(QMainWindow):
                 meta_data_dict["volNum"] = int(self.open_file_dialog.volume_input.text())
                 meta_data_dict["xrng"] = int(self.open_file_dialog.scan_range_x_input.text())
                 meta_data_dict["yrng"] = int(self.open_file_dialog.scan_range_y_input.text())
+
+            #print("envelope: ",meta_data_dict["envelope"])
 
             pixelmap_file = open(cur_dir+"\pixelmap.txt", "w")
             pixelmap_file.write(meta_data_dict["pixel"])

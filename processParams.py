@@ -60,7 +60,7 @@ class processParams:
         """
         self.chunks = chunks
         self.eye = 3
-        self.envelop = meta_data_dict["envelop"]
+        self.envelop = meta_data_dict["envelope"]
         self.match_path = meta_data_dict["pixel"]
         
         if from_fname:

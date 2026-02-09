@@ -14,7 +14,6 @@ class OpenFileDialog(QDialog):
         detector = QHBoxLayout()
         bit_depth = QHBoxLayout()
         scan = QHBoxLayout()
-        envelope = QHBoxLayout()
         res_axis_layout = QHBoxLayout()
         aline_per_b = QHBoxLayout()
         bscan_per_v = QHBoxLayout()
@@ -99,12 +98,7 @@ class OpenFileDialog(QDialog):
         scan.addWidget(uni_rb)
         scan.addWidget(self.bi_rb)
 
-        #Envelope
-        envelope_text = QLabel("Envelope extration:")
-        self.enable_extraction = QCheckBox("Enable")
-        self.enable_extraction.setChecked(False)
-        envelope.addWidget(envelope_text)
-        envelope.addWidget(self.enable_extraction)
+        
 
         #res axis
         axis_text = QLabel("Samples per A-scan")
@@ -167,7 +161,6 @@ class OpenFileDialog(QDialog):
         layout.addLayout(wavefile_layout)
         layout.addLayout(bit_depth)
         layout.addLayout(scan)
-        layout.addLayout(envelope)
         layout.addLayout(res_axis_layout)
         layout.addLayout(aline_per_b)
         layout.addLayout(bscan_per_v)
