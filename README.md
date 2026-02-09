@@ -38,8 +38,18 @@ After cloning the repository:
    ```bash
    python main.py
 
+## Quick Start
+
+## Example Data
+
+## How to Cite
+If you use 'Vis-OCT Explorer' in your research or publications, please cite the following preprint:
+
+Fan, W., et al. *Vis-OCT Explorer: An open-source platform for processing and exploring visible-light OCT data.* bioRxiv (2025). https://www.biorxiv.org/content/10.1101/2025.10.01.679626v1
+
+This citation will be updated once the peer-reviewed version becomes available.
+
 ## Licensing
-**Licensing**  
 - The source code in this repository is licensed under the BSD-3-Clause License.  
 - Pre-compiled executables (`.exe`) distributed via GitHub Releases and the project website are provided free for academic and non-commercial research use only under a separate binary license.
 
