@@ -43,7 +43,7 @@ After cloning the repository:
 ## Example Data
 
 ## How to Cite
-If you use 'Vis-OCT Explorer' in your research or publications, please cite the following preprint:
+If you use **Vis-OCT Explorer** in your research or publications, please cite the following preprint:
 
 Fan, W., et al. *Vis-OCT Explorer: An open-source platform for processing and exploring visible-light OCT data.* bioRxiv (2025). https://www.biorxiv.org/content/10.1101/2025.10.01.679626v1
 
