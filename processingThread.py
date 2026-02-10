@@ -257,11 +257,9 @@ class ProcessingThread(QThread):
             frame_OCTA = None
             octa_lowVal = None
             octa_highVal = None
-            print("here1")
             
             if GPU_available and (cp.cuda.runtime.getDeviceProperties(cp.cuda.Device())["totalGlobalMem"] >= 2147483648):
                 #Total memory > 6GB
-                print("here2")
                 if processParameters.octaFlag:
                     frame_3D_out,frame_OCTA = octangio_Recon_Bal_GPU(data.raw,cp.array(dispersion.dispersion),stft.stft_w_g,processParameters,linear_wavenumber_matrix.kmap)
                 else:
@@ -291,7 +289,7 @@ class ProcessingThread(QThread):
             zpw = processParameters.zrng/(processParameters.res_axis/2)
             if not processParameters.SRFlag:
                 if not processParameters.octaFlag:
-                    print(111)
+                    
                     if GPU_available:
                         if processParameters.res_fast!=8192:
                             print("process parameter res fast != 8192")
@@ -300,7 +298,7 @@ class ProcessingThread(QThread):
                             
                             #frame_3D_resh_GPU= cp.asarray(frame_3D_resh[:,:,:int(processParameters.res_slow/2)])
                             frame_3D_resh_GPU = cp.asarray(frame_3D_resh)
-                            print(123)
+                            
                             vert_shift = [0]
                             if not self.batch:
                                 backLash = registration.get_backlash_pattern(frame_3D_resh_GPU,int(processParameters.res_slow),vert_shift,self.updateProgressBar)

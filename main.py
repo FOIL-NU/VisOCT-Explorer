@@ -1347,6 +1347,7 @@ class MainWindow(QMainWindow):
                 meta_data_dict["volNum"] = int(self.open_file_dialog.volume_input.text())
                 meta_data_dict["xrng"] = int(self.open_file_dialog.scan_range_x_input.text())
                 meta_data_dict["yrng"] = int(self.open_file_dialog.scan_range_y_input.text())
+                meta_data_dict["zrng"] = int(self.open_file_dialog.scan_range_z_input.text())
 
             #print("envelope: ",meta_data_dict["envelope"])
 

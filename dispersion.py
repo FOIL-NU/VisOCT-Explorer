@@ -47,17 +47,14 @@ def disperse_GPU(x,testFrm,kmap,disp_stft,processParams,newres_fast,distMat,prog
     frameW = cp.asarray(np.abs(frameW))
 
     refWindow = np.ceil((np.shape(disp_stft.stft_w_g)[1]-1)/2)
-    #refWindow = 2
-
     
     for wind in range(1,np.shape(disp_stft.stft_w_g)[1]):
         output = register_images(frameW[distMat,:,int(refWindow)],frameW[distMat,:,int(wind)],usfac=usfac)
         shift = shift + abs(output[1])
     
-    #frameWfull = frameW[distMat,:,0]
     if progress!=None:
         progress.emit(3)
-    print("total shift:", float(shift))
+
     del frameW
     return float(shift)
 

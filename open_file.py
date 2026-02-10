@@ -21,6 +21,7 @@ class OpenFileDialog(QDialog):
         volume_rep = QHBoxLayout()
         scan_range_x = QHBoxLayout()
         scan_range_y = QHBoxLayout()
+        scan_range_z = QHBoxLayout()
         self.resize(330, 450)
         self.setWindowTitle("Open file")
         
@@ -91,8 +92,8 @@ class OpenFileDialog(QDialog):
 
         #scan pattern
         scan_text = QLabel("Scan pattern:")
-        uni_rb = QRadioButton("Uni")
-        self.bi_rb = QRadioButton("Bi")
+        uni_rb = QRadioButton("Unidirection")
+        self.bi_rb = QRadioButton("Bidirection")
         self.bi_rb.setChecked(True)
         scan.addWidget(scan_text)
         scan.addWidget(uni_rb)
@@ -136,18 +137,25 @@ class OpenFileDialog(QDialog):
         volume_rep.addWidget(self.volume_input)
 
         #scan_range_x
-        scan_range_x_text = QLabel("Scan range X[mm]")
-        self.scan_range_x_input = QLineEdit("2")
+        scan_range_x_text = QLabel("Scan range X[um]")
+        self.scan_range_x_input = QLineEdit("2000")
         self.scan_range_x_input.setValidator(validator)
         scan_range_x.addWidget(scan_range_x_text)
         scan_range_x.addWidget(self.scan_range_x_input)
 
         #scan_range_y
-        scan_range_y_text = QLabel("Scan range Y[mm]")
-        self.scan_range_y_input = QLineEdit("2")
+        scan_range_y_text = QLabel("Scan range Y[um]")
+        self.scan_range_y_input = QLineEdit("2000")
         self.scan_range_y_input.setValidator(validator)
         scan_range_y.addWidget(scan_range_y_text)
         scan_range_y.addWidget(self.scan_range_y_input)
+
+        #scan_range_z
+        scan_range_z_text = QLabel("Z range[um]")
+        self.scan_range_z_input = QLineEdit("1150")
+        self.scan_range_z_input.setValidator(validator)
+        scan_range_z.addWidget(scan_range_z_text)
+        scan_range_z.addWidget(self.scan_range_z_input)
         
         ok_button = QPushButton("OK")
         ok_button.clicked.connect(self.accept)
@@ -168,6 +176,7 @@ class OpenFileDialog(QDialog):
         layout.addLayout(volume_rep)
         layout.addLayout(scan_range_x)
         layout.addLayout(scan_range_y)
+        layout.addLayout(scan_range_z)
         layout.addLayout(buttons)
 
         self.setLayout(layout)
