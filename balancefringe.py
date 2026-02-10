@@ -115,8 +115,9 @@ class fringes:
 
         raw[:,interpMat<=0] = 0
         raw[:,interpMat>=2047] = 0
-
+        print(self.processParams.envelop)
         if self.processParams.envelop:
+
             envelop = cp.zeros_like(raw)
             for i in range(cp.shape(raw)[0]):
                 aline = raw[i,:]

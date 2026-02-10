@@ -10,7 +10,6 @@ from pyqtgraph.exporters import ImageExporter
 
 from Saving_thread import SavingThread
 from dm_tab import Distance_Measurement_Tab
-from adaptive_balance import adaptive_balance,Adaptive_Balance_Thread
 from balancefringe import fringes
 from processParams import processParams
 from resample import linear_k
@@ -99,7 +98,6 @@ class MainWindow(QMainWindow):
         self.ui.stackedWidget.setCurrentIndex(5)
         self.ui.home_btn.clicked.connect(self.go_home)
         self.ui.flip_btn.clicked.connect(self.flip)
-        self.ui.multiple_measurement_btn.clicked.connect(self.multiple_measurement_btn_toggle)
         self.ui.set_note_btn.clicked.connect(self.set_note_toggle)
         self.ui.actionOpen_Raw.triggered.connect(self.open_file)
         self.ui.actionSystem_Setting.triggered.connect(self.open_system_setting)
@@ -112,13 +110,28 @@ class MainWindow(QMainWindow):
         #self.ui.adaptive_btn_2.clicked.connect(self.adaptive_balance)
 
         self.ui.octa_btn.clicked.connect(self.octa_window)
+        self.ui.octa_btn.setEnabled(True)
         self.ui.batch_btn.clicked.connect(self.batch_processing)
         self.ui.fibergram_btn.clicked.connect(self.fibergram_window)
-        self.ui.flatten_btn.clicked.connect(self.run_flatten)
         self.ui.circ_btn.clicked.connect(self.circ_window)
         self.ui.enface_otherdim.clicked.connect(self.openEnface_3D)
-        self.ui.set_rindex_btn.clicked.connect(self.set_rindex)
         self.ui.pushButton_4.clicked.connect(self.openRendererWindow)
+        self.enface_divider = 4
+        
+        self.plot_grid = False
+        self.circ_grid_plotted = False
+        self.dm_tab = None
+        self.resample_process = ResampleThread(0,0,0,0,0)
+        self.process = ProcessingThread()
+        self.update_volume_process = UpdateVolumeThread()
+        self.process.progress.connect(self.progress_callback)
+        self.process.updateProgressBar.connect(self.updateProgress)
+        self.process.image_ready.connect(self.image_ready_callback)
+        self.ui.circ_resample_btn.clicked.connect(self.resample)
+        self.ui.circ_save_raw_btn.setDisabled(True)
+        self.resample_process.progress.connect(self.circ_progress_callback)
+        self.resample_process.resample_ready.connect(self.resample_ready_callback)
+
         self.ui.tsa_btn.clicked.connect(self.TSA_processing)
         self.dialog = None
         self.open_file_dialog = OpenFileDialog()
@@ -129,12 +142,8 @@ class MainWindow(QMainWindow):
             # Attempt to open the file for reading
             with open(file_path, 'r') as file:
                 content = file.read()
-                if content.split(",")[4] == "True":
-                    self.preview_mode = True
-                    self.preset_dispersion = float(content.split(",")[5])
-                    self.b_scan_preview_average = int(content.split(",")[6])
-                else:
-                    self.preview_mode = False
+                
+                self.preview_mode = False
 
         except FileNotFoundError:
             self.preview_mode = False
@@ -235,13 +244,10 @@ class MainWindow(QMainWindow):
                     msg_box.setText('Pixel map not selected yet.\nYou can select an existing pixel map to begin with.\nOr generate one for the current dataset?')
                     
                     select_button = QPushButton("Select existing pixel map")
-                    generate_button = QPushButton("Generate new pixel map")
 
                     select_button.clicked.connect(self.select_pixmap)
-                    generate_button.clicked.connect(self.adaptive_balance)
 
                     msg_box.addButton(select_button, QMessageBox.AcceptRole)
-                    msg_box.addButton(generate_button, QMessageBox.AcceptRole)
                     # Connect custom slots to button clicks
                     #select_button.clicked.connect(lambda: custom_button_handler(custom_button1))
                     #generate_button.clicked.connect(lambda: custom_button_handler(custom_button2))
@@ -258,19 +264,6 @@ class MainWindow(QMainWindow):
             self.process.updateProgressBar.connect(self.updateProgress)
             self.process.image_ready.connect(self.image_ready_callback)
             self.process.start()
-
-    def adaptive_balance(self):
-        
-        cur_dir = QDir.currentPath()
-        self.ui.label.setText(self._translate("MainWindow", "Status: VisOCT Explorer(Adaptive balancing...)"))
-        print(cur_dir)
-
-        processParameters = processParams(32,self.f, "")
-        print(processParameters.fname)
-        self.adaptive_process = Adaptive_Balance_Thread(processParameters.fname,processParameters,self.ui)
-        print("class created 2")
-        self.adaptive_process.start()
-        self.adaptive_process.optimized.connect(self.pixelMap_ready)
     
     def pixelMap_ready(self,x,pixMap_name):
         self.ui.textEdit_2.verticalScrollBar().setValue(self.ui.textEdit_2.verticalScrollBar().maximum())
@@ -347,133 +340,444 @@ class MainWindow(QMainWindow):
 
     def circ_window(self):
         self.ui.stackedWidget.setCurrentIndex(1)
-        self.ui.Edit_start_x.setText('')
-        self.ui.Edit_start_y.setText('')
-        self.ui.Edit_end_x.setText('')
-        self.ui.Edit_end_y.setText('')
-        self.prev_x1 = self.ui.Edit_start_x.toPlainText()
-        self.prev_y1 = self.ui.Edit_start_y.toPlainText()
-        self.prev_x2 = self.ui.Edit_end_x.toPlainText()
-        self.prev_y2 = self.ui.Edit_end_y.toPlainText()
-        self.ui.Edit_start_x.textChanged.connect(self.on_center_changed)
-        self.ui.Edit_start_y.textChanged.connect(self.on_center_changed)
-        self.ui.Edit_end_x.textChanged.connect(self.on_center_changed)
-        self.ui.Edit_end_y.textChanged.connect(self.on_center_changed)
-        
-    def on_center_changed(self):
-        new_x1 = self.ui.Edit_start_x.toPlainText()
-        new_y1 = self.ui.Edit_start_y.toPlainText()
-        new_x2 = self.ui.Edit_end_x.toPlainText()
-        new_y2 = self.ui.Edit_end_y.toPlainText()
-        if new_x1 == self.prev_x1 and new_y1 == self.prev_y1 and new_x2 == self.prev_x2 and new_y2 == self.prev_y2:
+        self.ui.horizontalSlider_01.valueChanged.connect(self.radius_changed)
+        self.ui.Edit_circ_x.setText(str(int(self.x_center/1024*self.processParameters.xrng)))
+        self.ui.Edit_circ_y.setText(str(int(self.y_center/1024*self.processParameters.yrng)))
+        self.ui.Edit_circ_x.textChanged.connect(self.on_center_changed)
+        self.ui.Edit_circ_y.textChanged.connect(self.on_center_changed)
+        self.ui.Edit_radius.textChanged.connect(self.on_radius_text_changed)
+        self.prev_x = self.ui.Edit_circ_x.toPlainText()
+        self.prev_y = self.ui.Edit_circ_y.toPlainText()
+        self.prev_r = self.ui.Edit_radius.toPlainText()
+        if self.plot_grid:
+            
+            self.angle_grid([self.start_coord[0],1023-self.start_coord[1]],[self.center[0],1023-self.center[1]],self.r,self.processParameters.eye)
+
+    def radius_changed(self):
+        self.radius_given = self.ui.horizontalSlider_01.value()
+        self.ui.Edit_radius.textChanged.disconnect(self.on_radius_text_changed)
+        self.ui.Edit_radius.setText(f"{str(int(self.radius_given/1024*self.processParameters.xrng))}")
+        self.resample_circ.setSize(2*self.radius_given)
+        self.ui.Edit_radius.textChanged.connect(self.on_radius_text_changed)
+
+    def on_radius_text_changed(self):
+        new_r = self.ui.Edit_radius.toPlainText()
+        self.ui.horizontalSlider_01.valueChanged.disconnect(self.radius_changed)
+        if new_r == self.prev_r:
             return
         else:
-            self.prev_x1 = new_x1
-            self.prev_y1 = new_y1
-            self.prev_x2 = new_x2
-            self.prev_y2 = new_y2
-            if new_x1 != '' and new_y1 != '':
-                self.x_center1 = int(float(new_x1)*(1024/self.processParameters.xrng))
-                self.y_center1 = int(float(new_y1)*(1024/self.processParameters.yrng))
-                self.ui.Enface_circ.clear()
-                self.ui.Enface_circ.position1 = [self.x_center1, self.y_center1]
-                self.ui.Enface_circ.addItem(self.circ_enface)
-                self.ui.Enface_circ.addItem(pg.ScatterPlotItem([self.x_center1], [self.y_center1], pen='r', brush='r', size=6))
-                if self.ui.Enface_circ.position2 != None:
-                    position2 = self.ui.Enface_circ.position2
-                    self.ui.Enface_circ.addItem(pg.ScatterPlotItem([position2[0]], [position2[1]], pen='r', brush='r', size=6))
-                    self.ui.Enface_circ.plot([self.x_center1,position2[0]],[self.y_center1,position2[1]],pen=pg.mkPen(width=2,color='r'))
+            self.prev_r = new_r
+            if new_r == '':
+                self.radius_given = 0
+                self.resample_circ.setSize(2*self.radius_given)
+                self.ui.horizontalSlider_01.setValue(0)
+            else:
+                self.radius_given = int(float(new_r) * (1024/self.processParameters.xrng))
+                self.resample_circ.setSize(2*self.radius_given)
+                self.ui.horizontalSlider_01.setValue(self.radius_given)
+        self.ui.horizontalSlider_01.valueChanged.connect(self.radius_changed)
+        
+    def on_center_changed(self):
+        new_x = self.ui.Edit_circ_x.toPlainText()
+        new_y = self.ui.Edit_circ_y.toPlainText()
+        if new_x == self.prev_x and new_y == self.prev_y:
+            return
+        else:
+            self.prev_x = new_x
+            self.prev_y = new_y
+            if new_x == '':
+                self.x_center = 0
+            else:
+                self.x_center = int(float(new_x)*(1024/self.processParameters.xrng))
             
-            if new_x2 != '' and new_y2 != '':
-                self.x_center2 = int(float(new_x2)*(1024/self.processParameters.xrng))
-                self.y_center2 = int(float(new_y2)*(1024/self.processParameters.yrng))
-                self.ui.Enface_circ.clear()
-                self.ui.Enface_circ.position2 = [self.x_center2, self.y_center2]
-                self.ui.Enface_circ.addItem(self.circ_enface)
-                self.ui.Enface_circ.addItem(pg.ScatterPlotItem([self.x_center2], [self.y_center2], pen='r', brush='r', size=6))
-                if self.ui.Enface_circ.position1 != None:
-                    position1 = self.ui.Enface_circ.position1
-                    self.ui.Enface_circ.addItem(pg.ScatterPlotItem([position1[0]], [position1[1]], pen='r', brush='r', size=6))
-                    self.ui.Enface_circ.plot([position1[0],self.x_center2],[position1[1],self.y_center2],pen=pg.mkPen(width=2,color='r'))
-
-            if self.start_point_marked:
+            if new_y == '':
+                self.y_center = 0
+            else:
+                self.y_center = int((float(new_y))*(1024/self.processParameters.yrng))
+            
+            print("y_center",self.y_center)
+            self.resample_circ.setData(x=[self.x_center], y=[self.y_center])
+            self.resample_center.setData(x=[self.x_center], y=[self.y_center])
+            
+            if self.start_point_marked or self.circ_grid_plotted:
                 self.start_point_marked = False
+                self.circ_grid_plotted = False
                 self.ui.Enface_circ.clear()
                 self.ui.Enface_circ.addItem(self.circ_enface,clear = True)
+                self.ui.Enface_circ.addItem(self.resample_circ)
+                self.ui.Enface_circ.addItem(self.resample_center)
 
     def resample(self):
-        new_x1 = self.ui.Edit_start_x.toPlainText()
-        new_y1 = self.ui.Edit_start_y.toPlainText()
-        new_x2 = self.ui.Edit_end_x.toPlainText()
-        new_y2 = self.ui.Edit_end_y.toPlainText()
-        if new_x1 != '' and new_y1 != '' and new_x2 != '' and new_y2 != '':
-            self.frame_3D_resh_origin = 20*np.log10(np.load(self.processParameters.fname.split('.RAW')[0]+'/frame_3D.npy'))
-            position1 = [int(float(new_x1)*(self.processParameters.res_fast/self.processParameters.xrng)),int(float(new_y1)*(self.processParameters.res_slow/self.processParameters.yrng))]
-            position2 = [int(float(new_x2)*(self.processParameters.res_fast/self.processParameters.xrng)),int(float(new_y2)*(self.processParameters.res_slow/self.processParameters.yrng))]
-            width = self.ui.averaging_dropdown_circ.currentIndex()+1
-            print("frame_3D shape",np.shape(self.frame_3D_resh))
-            #if self.processParameters.res_slow == self.processParameters.res_fast:
-            self.resample_process = ResampleThread(self.processParameters,self.frame_3D_resh_origin,position1,position2,width)
-            self.resample_process.start()
-            self.resample_process.progress.connect(self.circ_progress_callback)
-            self.resample_process.resample_ready.connect(self.resample_ready_callback)
+        self.ui.circ_resample_btn.setEnabled(False)
+        center = np.array((self.x_center,1024-self.y_center))
+        width = 12
+        self.frame_3D_resh_origin = 20*np.log10(np.load(self.processParameters.fname.split('.RAW')[0]+'/frame_3D.npy'))
+        print("frame_3D shape",np.shape(self.frame_3D_resh))
+        if self.processParameters.res_fast == 2 * self.processParameters.res_slow:
+            self.frame_3D = np.zeros((1024,self.processParameters.res_slow,self.processParameters.res_slow))
+            for i in range(0,self.processParameters.res_slow):
+                self.frame_3D[:,i,:] = np.mean(self.frame_3D_resh_origin[:,2*i:2*(i+1),:],axis=1)
+        if self.processParameters.res_slow == 2 * self.processParameters.res_fast:
+            self.frame_3D = np.zeros((1024,self.processParameters.res_fast,self.processParameters.res_fast))
+            for i in range(0,self.processParameters.res_fast):
+                self.frame_3D[:,:,i] = np.mean(self.frame_3D_resh_origin[:,:,2*i:2*(i+1)],axis=1)
+        if self.processParameters.res_slow == self.processParameters.res_fast:
+            self.frame_3D = self.frame_3D_resh_origin
+        self.resample_process.update_resample_content(self.processParameters,self.frame_3D,self.radius_given,center,width)
+        self.resample_process.start()
 
     def circ_progress_callback(self,prog_val):
         print(prog_val)
         self.ui.progressBar_circ.setValue(prog_val)
         
-    def resample_ready_callback(self,frame_3D,start_coord,end_coord):
+    def resample_ready_callback(self,frame_3D,start_coord,end_coord,center):
         self.ui.circ_Slow_Axis.clear()
+        print(start_coord)
         self.circ_step = 0.1
-        #print(end_coord)
-        #frame_3D = 20*np.log10(frame_3D)
-        self.frame_3D = frame_3D
-        circ_img = ((np.clip((frame_3D - self.oct_lowVal) / (self.oct_highVal - self.oct_lowVal), 0, 1)) * 255).astype(np.uint8)
-        circ_img = pg.ImageItem(np.flipud(np.rot90(circ_img)))
-        #self.ui.Enface_circ.plot([start_coord[0],center[0]],[start_coord[1],center[1]],pen=pg.mkPen('r',width=3))
+        if frame_3D.shape[1] % 6 != 0:
+        # Remove extra columns to make the number of columns divisible by 4
+            frame_3D = frame_3D[:, :(frame_3D.shape[1] // 6) * 6]
+
+        # Average every 4 columns
+        self.frame_3D = np.mean(frame_3D.reshape(frame_3D.shape[0], -1, 6), axis=2)
+        self.circ_lowVal = np.mean(self.frame_3D)+1
+        self.circ_highVal = self.circ_lowVal + 2.25 * np.std(self.frame_3D)
+        circ_img = ((np.clip((self.frame_3D - self.circ_lowVal) / (self.circ_highVal - self.circ_lowVal), 0, 1)) * 255).astype(np.uint8)
+        
+        if self.processParameters.eye == 0 or self.processParameters.eye == 3:
+            circ_img = pg.ImageItem(np.rot90(circ_img))
+        else:
+            circ_img = pg.ImageItem(np.flipud(np.rot90(np.roll(circ_img,int(np.shape(circ_img)[1]/2),axis=1))))
+        self.r = start_coord[0]-center[0]
+        center[1] = 1023-center[1]
+        start_coord[1] = 1023-start_coord[1]
+        self.ui.Enface_circ.clear()
+        self.ui.Enface_circ.addItem(self.circ_enface,clear = True)
+        self.ui.Enface_circ.addItem(self.resample_circ)
+        self.plot_grid = True
+        self.start_coord = start_coord
+        self.center = center
+        self.angle_grid(start_coord,center,self.r,self.processParameters.eye)
+
+        
+        center[1] = 1023-center[1]
+        start_coord[1] = 1023-start_coord[1]
+
         self.start_point_marked = True
-        circ_img.setRect(0,0,1024,1024)
+        circ_img.setRect(0,0,int(np.shape(self.frame_3D)[1]*0.8),330)
+        cmap = plt.get_cmap('gray')
+
+        # Convert the colormap to a lookup table (LUT)
+        lut = (cmap(np.linspace(0, 1, 256))[:, :3] * 255).astype(np.uint8)
+
+        circ_img.setLookupTable(lut)
+        self.ui.circ_Slow_Axis.setLimits(xMin=0, xMax=int(np.shape(self.frame_3D)[1]*0.8), yMin=0, yMax=330)
         self.ui.circ_Slow_Axis.addItem(circ_img, clear=True)
-        self.ui.circ_Slow_Axis.setImageSize(self.processParameters,self.ui.distance_circ,1024)
+        self.ui.circ_Slow_Axis.setBscan_number(0)
+        self.ui.circ_Slow_Axis.setImageSize(self.processParameters,self.ui.distance_circ,self.ui.circ_Slow_Axis.geometry(),np.shape(frame_3D)[1],self.r)
+
         self.ui.circ_Slow_Axis.setMeasurement_result_table(self.dm_tab)
         self.ui.reset_measure_circ.clicked.connect(self.reset_circ_measurement)
+        self.reset_circ_measurement()
         self.ui.oct_contrast_Slider_circ.setEnabled(True)
         self.ui.oct_contrast_Slider_circ.valueChanged.connect(self.circ_low)
         
-
+        self.ui.circ_resample_btn.setEnabled(True)
+        self.ui.save_marked_plot_circ.clicked.connect(self.save_marked_circ_measurement_plot)
+        #self.ui.circ_horizontalSlider_2.setEnabled(True)
+        #self.ui.circ_horizontalSlider_2.valueChanged.connect(self.circ_high)
+        self.ui.circ_save_raw_btn.setEnabled(True)
+        self.ui.circ_save_raw_btn.clicked.connect(self.save_raw_circ_resample)
+    
     def circ_low(self,value):
         self.circ_lowVal = (value-75)*self.circ_step+self.lowVal                           #lower lowbound and higher upperbound for bscan
         self.circ_highVal = (self.ui.oct_contrast_Slider_circ.value()-75)*self.circ_step+self.highVal
         self.update_Circ_Img()
 
+    def angle_grid(self,start_coord,center,r,eye):
+        if eye ==0 or eye ==3:
+            self.circ_enface_add_angle_grid_OD(start_coord,center,r)
+        elif eye==1:
+            self.circ_enface_add_angle_grid_OS(start_coord,center,r)
+
+    def circ_high(self,value):
+        self.circ_lowVal = (self.ui.circ_horizontalSlider.value()-75)*self.circ_step+self.lowVal                           #lower lowbound and higher upperbound for bscan
+        self.circ_highVal = (value-75)*self.circ_step+self.highVal
+        self.update_Circ_Img()
+    
     def update_Circ_Img(self):
         self.ui.circ_Slow_Axis.clear()
         circ_img = ((np.clip((self.frame_3D - self.circ_lowVal) / (self.circ_highVal - self.circ_lowVal), 0, 1)) * 255).astype(np.uint8)
         circ_img = pg.ImageItem(np.flipud(np.rot90(circ_img)))
-        circ_img.setRect(0,0,8192,1024)
+        circ_img.setRect(0,0,int(np.shape(self.frame_3D)[1]),330)
         self.ui.circ_Slow_Axis.addItem(circ_img, clear=True)
         #self.ui.circ_Slow_Axis.setImageSize(self.processParameters,self.ui.distance,self.ui.circ_Slow_Axis.geometry())
 
     def go_home(self):
         self.ui.stackedWidget.setCurrentIndex(0)
         self.ui.label.setText(self._translate("MainWindow", "Status: VisOCT Explorer "+self.status))
+        self.ui.horizontalSlider_01.valueChanged.disconnect()
+        self.ui.Edit_circ_x.textChanged.disconnect()
+        self.ui.Edit_circ_y.textChanged.disconnect()
+        self.ui.Edit_radius.textChanged.disconnect()
 
     def reset_circ_measurement(self):
         self.ui.circ_Slow_Axis.clear()
-        circ_img = ((np.clip((self.frame_3D - self.lowVal) / (self.highVal - self.lowVal), 0, 1)) * 255).astype(np.uint8)
-        circ_img = pg.ImageItem(np.flipud(np.rot90(circ_img)))
-        circ_img.setRect(0,0,8192,1024)
-        self.ui.circ_Slow_Axis.addItem(circ_img, clear=True)
-        self.ui.circ_Slow_Axis.reset_measure()
+        print("reset")
+        circ_img = ((np.clip((self.frame_3D - self.circ_lowVal) / (self.circ_highVal - self.circ_lowVal), 0, 1)) * 255).astype(np.uint8)
+        
+        if self.processParameters.eye == 0 or self.processParameters.eye == 3:
+            circ_img = pg.ImageItem(np.rot90(circ_img))
+        else:
+            circ_img = pg.ImageItem(np.flipud(np.rot90(np.roll(circ_img,int(np.shape(circ_img)[1]/2),axis=1))))
 
-    def circ_clear(self):
-        self.ui.Edit_start_x.setText('')
-        self.ui.Edit_start_y.setText('')
-        self.ui.Edit_end_x.setText('')
-        self.ui.Edit_end_y.setText('')
-        self.ui.Enface_circ.clear()
-        self.ui.Enface_circ.addItem(self.circ_enface, clear=True)
-        self.ui.Enface_circ.reset_measure()
+        cmap = plt.get_cmap('gray')
+
+        # Convert the colormap to a lookup table (LUT)
+        lut = (cmap(np.linspace(0, 1, 256))[:, :3] * 255).astype(np.uint8)
+        
+        circ_img.setLookupTable(lut)
+
+        circ_img.setRect(0,0,int(np.shape(self.frame_3D)[1]*0.8),330)
+        self.ui.circ_Slow_Axis.addItem(circ_img, clear=True)
+
+        self.circ_resample_add_angle_grid()
+        #grid = GridItem(int(np.shape(self.frame_3D)[1]*0.8))
+        #self.ui.Slow_Axis.showGrid(x=True, y=True)
+        #self.ui.circ_Slow_Axis.addItem(grid)
+        self.ui.circ_Slow_Axis.reset_measure()
+        self.ui.distance_circ.setText(" ")
+
+    def circ_enface_add_angle_grid_OD(self,start_coord,center,r):
+        self.circ_grid_plotted = True
+        self.ui.Enface_circ.plot([start_coord[0],center[0]],[start_coord[1],center[1]],pen=pg.mkPen('r',width=3))
+        measurement_number = pg.TextItem(text=f"{0}",color=(255,0,0))
+        measurement_number.setFont(QFont("Arial",10))
+        measurement_number.setPos(start_coord[0]-35,start_coord[1]+15)
+        self.ui.Enface_circ.addItem(measurement_number)
+
+        self.ui.Enface_circ.plot([int(center[0]-r * np.cos(np.radians(30))),center[0]],[int(start_coord[1]+r * np.sin(np.radians(30))),center[1]],pen=pg.mkPen('r',width=3))
+        measurement_number2 = pg.TextItem(text=f"{210}",color=(255,0,0))
+        measurement_number2.setFont(QFont("Arial",10))
+        measurement_number2.setPos(int(center[0]-r * np.cos(np.radians(30)))-20,int(start_coord[1]+r * np.sin(np.radians(30)))-15)
+        self.ui.Enface_circ.addItem(measurement_number2)
+        
+        self.ui.Enface_circ.plot([int(center[0]-r * np.cos(np.radians(60))),center[0]],[int(start_coord[1]+r * np.sin(np.radians(60))),center[1]],pen=pg.mkPen('r',width=3))
+        measurement_number11 = pg.TextItem(text=f"{240}",color=(255,0,0))
+        measurement_number11.setFont(QFont("Arial",10))
+        measurement_number11.setPos(int(center[0]-r * np.cos(np.radians(60)))-20,int(start_coord[1]+r * np.sin(np.radians(60)))-15)
+        self.ui.Enface_circ.addItem(measurement_number11)
+
+        self.ui.Enface_circ.plot([center[0],center[0]],[start_coord[1]+r,center[1]],pen=pg.mkPen('r',width=3))
+        measurement_number3 = pg.TextItem(text=f"{270}",color=(255,0,0))
+        measurement_number3.setFont(QFont("Arial",10))
+        measurement_number3.setPos(center[0]-10,start_coord[1]+r-10)
+        self.ui.Enface_circ.addItem(measurement_number3)
+
+        self.ui.Enface_circ.plot([int(center[0]+r * np.cos(np.radians(30))),center[0]],[int(start_coord[1]+r * np.sin(np.radians(30))),center[1]],pen=pg.mkPen('r',width=3))
+        measurement_number4 = pg.TextItem(text=f"{330}",color=(255,0,0))
+        measurement_number4.setFont(QFont("Arial",10))
+        measurement_number4.setPos(int(center[0]+r * np.cos(np.radians(30)))-20,int(start_coord[1]+r * np.sin(np.radians(30)))-10)
+        self.ui.Enface_circ.addItem(measurement_number4)
+        
+        self.ui.Enface_circ.plot([int(center[0]+r * np.cos(np.radians(60))),center[0]],[int(start_coord[1]+r * np.sin(np.radians(60))),center[1]],pen=pg.mkPen('r',width=3))
+        measurement_number12 = pg.TextItem(text=f"{300}",color=(255,0,0))
+        measurement_number12.setFont(QFont("Arial",10))
+        measurement_number12.setPos(int(center[0]+r * np.cos(np.radians(60)))-20,int(start_coord[1]+r * np.sin(np.radians(60)))-10)
+        self.ui.Enface_circ.addItem(measurement_number12)
+
+        self.ui.Enface_circ.plot([center[0]-r,center[0]],[start_coord[1],center[1]],pen=pg.mkPen('r',width=3))
+        measurement_number5 = pg.TextItem(text=f"{180}",color=(255,0,0))
+        measurement_number5.setFont(QFont("Arial",10))
+        measurement_number5.setPos(center[0]-r+20,start_coord[1]-10)
+        self.ui.Enface_circ.addItem(measurement_number5)
+
+        self.ui.Enface_circ.plot([center[0],center[0]],[start_coord[1]-r,center[1]],pen=pg.mkPen('r',width=3))
+        measurement_number6 = pg.TextItem(text=f"{90}",color=(255,0,0))
+        measurement_number6.setFont(QFont("Arial",10))
+        measurement_number6.setPos(center[0],start_coord[1]-r+45)
+        self.ui.Enface_circ.addItem(measurement_number6)
+
+        self.ui.Enface_circ.plot([int(center[0]+r * np.cos(np.radians(30))),center[0]],[int(start_coord[1]-r * np.sin(np.radians(30))),center[1]],pen=pg.mkPen('r',width=3))
+        measurement_number7 = pg.TextItem(text=f"{30}",color=(255,0,0))
+        measurement_number7.setFont(QFont("Arial",10))
+        measurement_number7.setPos(int(center[0]+r * np.cos(np.radians(30)))-50,int(start_coord[1]-r * np.sin(np.radians(30)))+50)
+        self.ui.Enface_circ.addItem(measurement_number7)
+
+        self.ui.Enface_circ.plot([int(center[0]+r * np.cos(np.radians(60))),center[0]],[int(start_coord[1]-r * np.sin(np.radians(60))),center[1]],pen=pg.mkPen('r',width=3))
+        measurement_number9 = pg.TextItem(text=f"{60}",color=(255,0,0))
+        measurement_number9.setFont(QFont("Arial",10))
+        measurement_number9.setPos(int(center[0]+r * np.cos(np.radians(60)))-50,int(start_coord[1]-r * np.sin(np.radians(60)))+50)
+        self.ui.Enface_circ.addItem(measurement_number9)
+
+        self.ui.Enface_circ.plot([int(center[0] - r * np.cos(np.radians(60))),center[0]],[int(start_coord[1]-r * np.sin(np.radians(60))),center[1]],pen=pg.mkPen('r',width=3))
+        measurement_number10 = pg.TextItem(text=f"{120}",color=(255,0,0))
+        measurement_number10.setFont(QFont("Arial",10))
+        measurement_number10.setPos(int(center[0] - r * np.cos(np.radians(60)))+5,int(start_coord[1]-r * np.sin(np.radians(60)))+20)
+        self.ui.Enface_circ.addItem(measurement_number10)
+
+        self.ui.Enface_circ.plot([int(center[0] - r * np.cos(np.radians(30))),center[0]],[int(start_coord[1]-r * np.sin(np.radians(30))),center[1]],pen=pg.mkPen('r',width=3))
+        measurement_number8 = pg.TextItem(text=f"{150}",color=(255,0,0))
+        measurement_number8.setFont(QFont("Arial",10))
+        measurement_number8.setPos(int(center[0] - r * np.cos(np.radians(30)))+5,int(start_coord[1]-r * np.sin(np.radians(30)))+20)
+        self.ui.Enface_circ.addItem(measurement_number8)
+
+    def circ_enface_add_angle_grid_OS(self,start_coord,center,r):
+        self.circ_grid_plotted = True
+        self.ui.Enface_circ.plot([start_coord[0],center[0]],[start_coord[1],center[1]],pen=pg.mkPen('r',width=3))
+        measurement_number = pg.TextItem(text=f"{180}",color=(255,0,0))
+        measurement_number.setFont(QFont("Arial",10))
+        measurement_number.setPos(start_coord[0]-35,start_coord[1]+15)
+        self.ui.Enface_circ.addItem(measurement_number)
+
+        self.ui.Enface_circ.plot([int(center[0]-r * np.cos(np.radians(30))),center[0]],[int(start_coord[1]+r * np.sin(np.radians(30))),center[1]],pen=pg.mkPen('r',width=3))
+        measurement_number2 = pg.TextItem(text=f"{330}",color=(255,0,0))
+        measurement_number2.setFont(QFont("Arial",10))
+        measurement_number2.setPos(int(center[0]-r * np.cos(np.radians(30)))-20,int(start_coord[1]+r * np.sin(np.radians(30)))-15)
+        self.ui.Enface_circ.addItem(measurement_number2)
+        
+        self.ui.Enface_circ.plot([int(center[0]-r * np.cos(np.radians(60))),center[0]],[int(start_coord[1]+r * np.sin(np.radians(60))),center[1]],pen=pg.mkPen('r',width=3))
+        measurement_number11 = pg.TextItem(text=f"{300}",color=(255,0,0))
+        measurement_number11.setFont(QFont("Arial",10))
+        measurement_number11.setPos(int(center[0]-r * np.cos(np.radians(60)))-20,int(start_coord[1]+r * np.sin(np.radians(60)))-15)
+        self.ui.Enface_circ.addItem(measurement_number11)
+
+        self.ui.Enface_circ.plot([center[0],center[0]],[start_coord[1]+r,center[1]],pen=pg.mkPen('r',width=3))
+        measurement_number3 = pg.TextItem(text=f"{270}",color=(255,0,0))
+        measurement_number3.setFont(QFont("Arial",10))
+        measurement_number3.setPos(center[0]-10,start_coord[1]+r-10)
+        self.ui.Enface_circ.addItem(measurement_number3)
+
+        self.ui.Enface_circ.plot([int(center[0]+r * np.cos(np.radians(30))),center[0]],[int(start_coord[1]+r * np.sin(np.radians(30))),center[1]],pen=pg.mkPen('r',width=3))
+        measurement_number4 = pg.TextItem(text=f"{210}",color=(255,0,0))
+        measurement_number4.setFont(QFont("Arial",10))
+        measurement_number4.setPos(int(center[0]+r * np.cos(np.radians(30)))-20,int(start_coord[1]+r * np.sin(np.radians(30)))-10)
+        self.ui.Enface_circ.addItem(measurement_number4)
+        
+        self.ui.Enface_circ.plot([int(center[0]+r * np.cos(np.radians(60))),center[0]],[int(start_coord[1]+r * np.sin(np.radians(60))),center[1]],pen=pg.mkPen('r',width=3))
+        measurement_number12 = pg.TextItem(text=f"{240}",color=(255,0,0))
+        measurement_number12.setFont(QFont("Arial",10))
+        measurement_number12.setPos(int(center[0]+r * np.cos(np.radians(60)))-20,int(start_coord[1]+r * np.sin(np.radians(60)))-10)
+        self.ui.Enface_circ.addItem(measurement_number12)
+
+        self.ui.Enface_circ.plot([center[0]-r,center[0]],[start_coord[1],center[1]],pen=pg.mkPen('r',width=3))
+        measurement_number5 = pg.TextItem(text=f"{0}",color=(255,0,0))
+        measurement_number5.setFont(QFont("Arial",10))
+        measurement_number5.setPos(center[0]-r+20,start_coord[1]-10)
+        self.ui.Enface_circ.addItem(measurement_number5)
+
+        self.ui.Enface_circ.plot([center[0],center[0]],[start_coord[1]-r,center[1]],pen=pg.mkPen('r',width=3))
+        measurement_number6 = pg.TextItem(text=f"{90}",color=(255,0,0))
+        measurement_number6.setFont(QFont("Arial",10))
+        measurement_number6.setPos(center[0],start_coord[1]-r+45)
+        self.ui.Enface_circ.addItem(measurement_number6)
+
+        self.ui.Enface_circ.plot([int(center[0]+r * np.cos(np.radians(30))),center[0]],[int(start_coord[1]-r * np.sin(np.radians(30))),center[1]],pen=pg.mkPen('r',width=3))
+        measurement_number7 = pg.TextItem(text=f"{150}",color=(255,0,0))
+        measurement_number7.setFont(QFont("Arial",10))
+        measurement_number7.setPos(int(center[0]+r * np.cos(np.radians(30)))-50,int(start_coord[1]-r * np.sin(np.radians(30)))+50)
+        self.ui.Enface_circ.addItem(measurement_number7)
+
+        self.ui.Enface_circ.plot([int(center[0]+r * np.cos(np.radians(60))),center[0]],[int(start_coord[1]-r * np.sin(np.radians(60))),center[1]],pen=pg.mkPen('r',width=3))
+        measurement_number9 = pg.TextItem(text=f"{120}",color=(255,0,0))
+        measurement_number9.setFont(QFont("Arial",10))
+        measurement_number9.setPos(int(center[0]+r * np.cos(np.radians(60)))-50,int(start_coord[1]-r * np.sin(np.radians(60)))+50)
+        self.ui.Enface_circ.addItem(measurement_number9)
+
+        self.ui.Enface_circ.plot([int(center[0] - r * np.cos(np.radians(60))),center[0]],[int(start_coord[1]-r * np.sin(np.radians(60))),center[1]],pen=pg.mkPen('r',width=3))
+        measurement_number10 = pg.TextItem(text=f"{60}",color=(255,0,0))
+        measurement_number10.setFont(QFont("Arial",10))
+        measurement_number10.setPos(int(center[0] - r * np.cos(np.radians(60)))+5,int(start_coord[1]-r * np.sin(np.radians(60)))+20)
+        self.ui.Enface_circ.addItem(measurement_number10)
+
+        self.ui.Enface_circ.plot([int(center[0] - r * np.cos(np.radians(30))),center[0]],[int(start_coord[1]-r * np.sin(np.radians(30))),center[1]],pen=pg.mkPen('r',width=3))
+        measurement_number8 = pg.TextItem(text=f"{30}",color=(255,0,0))
+        measurement_number8.setFont(QFont("Arial",10))
+        measurement_number8.setPos(int(center[0] - r * np.cos(np.radians(30)))+5,int(start_coord[1]-r * np.sin(np.radians(30)))+20)
+        self.ui.Enface_circ.addItem(measurement_number8)
+        
+
+    def circ_resample_add_angle_grid(self):
+        unit_width = int(np.shape(self.frame_3D)[1]*0.8/12)
+        self.line_11 = self.ui.circ_Slow_Axis.plot([unit_width,unit_width],[1024,0],pen=pg.mkPen('r',width=1))
+        self.angle_1 = pg.TextItem(text=f"{30}",color=(255,0,0))
+        self.angle_1.setFont(QFont("Arial",10))
+        self.angle_1.setPos(unit_width-15,15)
+        self.ui.circ_Slow_Axis.addItem(self.angle_1)
+        self.line_1 = self.ui.circ_Slow_Axis.plot([unit_width*2,unit_width*2],[1024,0],pen=pg.mkPen('r',width=1))
+        self.angle_2 = pg.TextItem(text=f"{60}",color=(255,0,0))
+        self.angle_2.setFont(QFont("Arial",10))
+        self.angle_2.setPos(unit_width*2-15,15)
+        self.ui.circ_Slow_Axis.addItem(self.angle_2)
+        self.line_2 = self.ui.circ_Slow_Axis.plot([unit_width*3,unit_width*3],[1024,0],pen=pg.mkPen('r',width=1))
+        self.angle_3 = pg.TextItem(text=f"{90}",color=(255,0,0))
+        self.angle_3.setFont(QFont("Arial",10))
+        self.angle_3.setPos(unit_width*3-25,15)
+        self.ui.circ_Slow_Axis.addItem(self.angle_3)
+        self.line_3 = self.ui.circ_Slow_Axis.plot([unit_width*4,unit_width*4],[1024,0],pen=pg.mkPen('r',width=1))
+        self.angle_4 = pg.TextItem(text=f"{120}",color=(255,0,0))
+        self.angle_4.setFont(QFont("Arial",10))
+        self.angle_4.setPos(unit_width*4-25,15)
+        self.ui.circ_Slow_Axis.addItem(self.angle_4)
+        self.line_4 = self.ui.circ_Slow_Axis.plot([unit_width*5,unit_width*5],[1024,0],pen=pg.mkPen('r',width=1))
+        self.angle_5 = pg.TextItem(text=f"{150}",color=(255,0,0))
+        self.angle_5.setFont(QFont("Arial",10))
+        self.angle_5.setPos(unit_width*5-25,15)
+        self.ui.circ_Slow_Axis.addItem(self.angle_5)
+        self.line_5 = self.ui.circ_Slow_Axis.plot([unit_width*6,unit_width*6],[1024,0],pen=pg.mkPen('r',width=1))
+        self.angle_6 = pg.TextItem(text=f"{180}",color=(255,0,0))
+        self.angle_6.setFont(QFont("Arial",10))
+        self.angle_6.setPos(unit_width*6-25,15)
+        self.ui.circ_Slow_Axis.addItem(self.angle_6)
+        self.line_6 = self.ui.circ_Slow_Axis.plot([unit_width*7,unit_width*7],[1024,0],pen=pg.mkPen('r',width=1))
+        self.angle_7 = pg.TextItem(text=f"{210}",color=(255,0,0))
+        self.angle_7.setFont(QFont("Arial",10))
+        self.angle_7.setPos(unit_width*7-25,15)
+        self.ui.circ_Slow_Axis.addItem(self.angle_7)
+        self.line_7 = self.ui.circ_Slow_Axis.plot([unit_width*8,unit_width*8],[1024,0],pen=pg.mkPen('r',width=1))
+        self.angle_8 = pg.TextItem(text=f"{240}",color=(255,0,0))
+        self.angle_8.setFont(QFont("Arial",10))
+        self.angle_8.setPos(unit_width*8-25,15)
+        self.ui.circ_Slow_Axis.addItem(self.angle_8)
+        self.line_8 = self.ui.circ_Slow_Axis.plot([unit_width*9,unit_width*9],[1024,0],pen=pg.mkPen('r',width=1))
+        self.angle_9 = pg.TextItem(text=f"{270}",color=(255,0,0))
+        self.angle_9.setFont(QFont("Arial",10))
+        self.angle_9.setPos(unit_width*9-25,15)
+        self.ui.circ_Slow_Axis.addItem(self.angle_9)
+        self.line_9 = self.ui.circ_Slow_Axis.plot([unit_width*10,unit_width*10],[1024,0],pen=pg.mkPen('r',width=1))
+        self.angle_10 = pg.TextItem(text=f"{300}",color=(255,0,0))
+        self.angle_10.setFont(QFont("Arial",10))
+        self.angle_10.setPos(unit_width*10-25,15)
+        self.ui.circ_Slow_Axis.addItem(self.angle_10)
+        self.line_10 = self.ui.circ_Slow_Axis.plot([unit_width*11,unit_width*11],[1024,0],pen=pg.mkPen('r',width=1))
+        self.angle_11 = pg.TextItem(text=f"{330}",color=(255,0,0))
+        self.angle_11.setFont(QFont("Arial",10))
+        self.angle_11.setPos(unit_width*11-25,15)
+        self.ui.circ_Slow_Axis.addItem(self.angle_11)
+
+    def circ_resample_remove_angle_grid(self):
+        self.ui.circ_Slow_Axis.removeItem(self.angle_1)
+        self.ui.circ_Slow_Axis.removeItem(self.angle_2)
+        self.ui.circ_Slow_Axis.removeItem(self.angle_3)
+        self.ui.circ_Slow_Axis.removeItem(self.angle_4)
+        self.ui.circ_Slow_Axis.removeItem(self.angle_5)
+        self.ui.circ_Slow_Axis.removeItem(self.angle_6)
+        self.ui.circ_Slow_Axis.removeItem(self.angle_7)
+        self.ui.circ_Slow_Axis.removeItem(self.angle_8)
+        self.ui.circ_Slow_Axis.removeItem(self.angle_9)
+        self.ui.circ_Slow_Axis.removeItem(self.angle_10)
+        self.ui.circ_Slow_Axis.removeItem(self.angle_11)
+        self.ui.circ_Slow_Axis.removeItem(self.line_1)
+        self.ui.circ_Slow_Axis.removeItem(self.line_2)
+        self.ui.circ_Slow_Axis.removeItem(self.line_3)
+        self.ui.circ_Slow_Axis.removeItem(self.line_4)
+        self.ui.circ_Slow_Axis.removeItem(self.line_5)
+        self.ui.circ_Slow_Axis.removeItem(self.line_6)
+        self.ui.circ_Slow_Axis.removeItem(self.line_7)
+        self.ui.circ_Slow_Axis.removeItem(self.line_8)
+        self.ui.circ_Slow_Axis.removeItem(self.line_9)
+        self.ui.circ_Slow_Axis.removeItem(self.line_10)
+        self.ui.circ_Slow_Axis.removeItem(self.line_11)
 
     def reset_measurement(self):
         slow_axis_img_np = cv2.resize(((np.clip((self.frame_3D_resh[:,:,self.cur_img_slow_no] - self.oct_lowVal) / (self.oct_highVal - self.oct_lowVal), 0, 1)) * 255).astype(np.uint8),(0,0),fx=4,fy=4)
@@ -507,11 +811,11 @@ class MainWindow(QMainWindow):
             pos = self.ui.Enface_circ.getViewBox().mapToView(event.scenePos())
             print("x:",pos.x())
             print("y:",pos.x())
-            self.resample_start.setData(x=[pos.x()], y=[pos.y()])
-            resample_x1 = str(int(pos.x()*self.processParameters.xrng/1024))
-            resample_y1 = str(int(pos.y()*self.processParameters.yrng/1024))
-            self.ui.Edit_start_x.setText(resample_x1)
-            self.ui.Edit_start_y.setText(resample_y1)
+            self.resample_center.setData(x=[pos.x()], y=[pos.y()])
+            circ_x = str(int(pos.x()*self.processParameters.xrng/1024))
+            circ_y = str(int(pos.y()*self.processParameters.yrng/1024))
+            self.ui.Edit_circ_x.setText(circ_x)
+            self.ui.Edit_circ_y.setText(circ_y)
 
     def update_volume(self):
         self.frame_3D_resh_origin_linear = np.load(self.processParameters.fname.split('.RAW')[0]+'/frame_3D.npy')
@@ -641,22 +945,21 @@ class MainWindow(QMainWindow):
 
         
         self.ui.Enface_circ.clear()
-        if self.preview_mode != True:
-            self.ui.Enface_circ.addItem(self.circ_enface,clear = True)
-            self.ui.Enface_circ.setImageSize(self.ui.Edit_start_x,self.ui.Edit_start_y,self.ui.Edit_end_x,self.ui.Edit_end_y,self.processParameters,1024)
-        self.ui.circ_clear_btn.clicked.connect(self.circ_clear)
+        self.ui.circ_Slow_Axis.clear()
+        self.ui.Enface_circ.addItem(self.circ_enface,clear = True)
 
-        
-        x = [512,512]
-        y = [512,512]
+        self.resample_circ = pg.ScatterPlotItem(size=0, pos=[(512,512)], brush=None, symbolBrush='r', pen=pg.mkPen('r',width=3), symbol='o')
+        self.resample_circ.setPxMode(False)
+        self.resample_center = pg.ScatterPlotItem(size=8, pos=[(512,512)], brush=None, symbolBrush='r', pen=pg.mkPen('r',width=3), symbol='o')
+        self.resample_center.setPxMode(False)
+        self.ui.Enface_circ.getViewBox().scene().sigMouseClicked.connect(self.circ_on_mouse_drag)
         #self.resample_center.sigDragged.connect(self.Enface_red_dragged)
         #self.new_x = 512
         #self.new_y = 512
-        self.x_center1 = 512
-        self.y_center1 = 512
-        self.x_center2 = 512
-        self.y_center2 = 512
-        #self.ui.Enface_circ.addItem(self.resample_circ)
+        self.x_center = 512
+        self.y_center = 512
+        self.ui.Enface_circ.addItem(self.resample_circ)
+        self.ui.Enface_circ.addItem(self.resample_center)
 
         self.ui.save_btn.clicked.connect(self.save_img)
         self.ui.next_frame_btn.clicked.connect(self.go_prev)
@@ -761,16 +1064,66 @@ class MainWindow(QMainWindow):
     def save_finished(self):
         self.ui.textEdit_2.append("File saving completed")
 
-    def multiple_measurement_btn_toggle(self):
-        self.ui.Slow_Axis.toggle_multiple_measurement()
+    def multiple_measurement_circ_btn_toggle(self):
+        self.ui.circ_Slow_Axis.toggle_multiple_measurement()
 
     def save_marked_measurement_plot(self):
+        self.ui.Slow_Axis.autoRange()
         exporter = ImageExporter(self.ui.Slow_Axis)
-        exporter.export('temp.tif')
+        if not os.path.exists(self.directory+"/measurement_result"):
+                os.makedirs(self.directory+"/measurement_result")
+        exporter.export(self.directory+'/measurement_result/marked_bscan_'+str(self.cur_img_slow_no*self.enface_divider)+'.tif')
+
+    def save_raw_circ_resample(self):
+        print("save_raw circ")
+        self.ui.Enface_circ.autoRange()
+        exporter = ImageExporter(self.ui.Enface_circ)
+        exporter.parameters()['width'] = 350
+        if not os.path.exists(self.directory+"/measurement_result"):
+            os.makedirs(self.directory+"/measurement_result")
+        if not os.path.exists(self.directory+"/measurement_result/r="+self.ui.Edit_radius.toPlainText()):
+            os.makedirs(self.directory+"/measurement_result/r="+self.ui.Edit_radius.toPlainText())
+        enface_filename = self.directory+"/measurement_result/r="+self.ui.Edit_radius.toPlainText()+'/enface.tif'
+        exporter.export(enface_filename)
+
+        print("save_raw circ")
+        circ_img = (np.flipud((np.clip((self.frame_3D - self.circ_lowVal) / (self.circ_highVal - self.circ_lowVal), 0, 1)) * 255)).astype(np.uint8)
+        cv2_image = cv2.cvtColor(circ_img, cv2.COLOR_GRAY2RGB)
+        export_filename = self.directory+"/measurement_result/r="+self.ui.Edit_radius.toPlainText()+'/resampled_raw_img.tiff'
+        #while os.path.exists(export_filename):
+        cv2.imwrite(export_filename, cv2_image)
+
+
+    def save_marked_circ_measurement_plot(self):
+        #self.ui.circ_Slow_Axis.autoRange()
+        self.ui.Enface_circ.autoRange()
+        exporter = ImageExporter(self.ui.Enface_circ)
+        exporter.parameters()['width'] = 350
+        if not os.path.exists(self.directory+"/measurement_result"):
+            os.makedirs(self.directory+"/measurement_result")
+        if not os.path.exists(self.directory+"/measurement_result/r="+self.ui.Edit_radius.toPlainText()):
+            os.makedirs(self.directory+"/measurement_result/r="+self.ui.Edit_radius.toPlainText())
+        i=1
+        enface_filename = self.directory+"/measurement_result/r="+self.ui.Edit_radius.toPlainText()+'/enface.tif'
+        exporter.export(enface_filename)
+        
+        #self.circ_resample_remove_angle_grid()
+        exporter = ImageExporter(self.ui.circ_Slow_Axis)
+        exporter.parameters()['width'] = np.shape(self.frame_3D)[1]
+        export_filename = self.directory+"/measurement_result/r="+self.ui.Edit_radius.toPlainText()+'/marked_circ_bscan_r='+self.ui.Edit_radius.toPlainText()+'_center='+self.ui.Edit_circ_x.toPlainText()+','+self.ui.Edit_circ_y.toPlainText()+'_'+str(i)+'.tif'
+        while os.path.exists(export_filename):
+            i += 1
+            export_filename = self.directory+"/measurement_result/r="+self.ui.Edit_radius.toPlainText()+'/marked_circ_bscan_r='+self.ui.Edit_radius.toPlainText()+'_center='+self.ui.Edit_circ_x.toPlainText()+','+self.ui.Edit_circ_y.toPlainText()+'_'+str(i)+'.tif'
+        exporter.export(export_filename)
+        #self.circ_resample_add_angle_grid()
 
     def set_note_toggle(self):
         measure_note = self.ui.measurement_note.toPlainText()
         self.ui.Slow_Axis.set_measurement_note(measure_note)
+        
+    def set_circ_note_toggle(self):
+        measure_note = self.ui.measurement_note_circ.toPlainText()
+        self.ui.circ_Slow_Axis.set_measurement_note(measure_note)
 
     def flip(self):
         self.flip_bscan = not self.flip_bscan
@@ -979,6 +1332,7 @@ class MainWindow(QMainWindow):
 
             
             meta_data_dict["envelope"] = str(self.system_setting.enable_extraction.isChecked())
+            meta_data_dict["chunks"] = int(self.system_setting.Edit_num_chunk.value())
             meta_data_dict["pixel"] = str(self.open_file_dialog.path_edit_pixmap.text())
             if "Bal" in filenames:
                 from_fname = True
@@ -999,7 +1353,7 @@ class MainWindow(QMainWindow):
             pixelmap_file = open(cur_dir+"\pixelmap.txt", "w")
             pixelmap_file.write(meta_data_dict["pixel"])
             pixelmap_file.close()
-            self.processParameters = processParams(32,filenames, from_fname, meta_data_dict, self.match_Path)
+            self.processParameters = processParams(meta_data_dict["chunks"], filenames, from_fname, meta_data_dict, self.match_Path)
 
             if self.processParameters.balFlag:
                 self.ui.balancing_label.setText(self._translate("MainWindow", "Balanced: Yes"))

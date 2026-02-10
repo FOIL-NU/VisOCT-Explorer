@@ -139,10 +139,12 @@ class System_setting(object):
         self.depth = int(self.Edit_depth.toPlainText())
         self.upsample_factor = int(self.Edit_upsample.toPlainText())
         self.num_check = int(self.Edit_num_chunk.toPlainText())
+        envelope = "False"
+        if self.enable_extraction.isChecked():
+            envelope = "True"
         
-        self.b_scan_preview_average = int(self.Edit_b_scan_avg_preview.toPlainText())
         file_name = "saved_setting.txt"
-        data = str(self.a_line_to_gpu) + "," + str(self.depth) + "," + str(self.upsample_factor)+","+str(self.num_check)+","+str(self.preview_mode)+","+str(self.dispersion_coef)+","+str(self.b_scan_preview_average)
+        data = str(self.a_line_to_gpu) + "," + str(self.depth) + "," + str(self.upsample_factor)+","+str(self.num_check)+","+envelope
         with open(file_name, 'w') as file:
             file.write(data)
         #self.upsample_factor = int(self.Edit_upsample.toPlainText())
