@@ -1,0 +1,20 @@
+Binary License – Academic & Non-Commercial Research Use Only
+
+Copyright © 2026 FOIL-NU
+All rights reserved.
+
+Permission is hereby granted to download and use the pre-compiled executable files (the “Software”) solely for academic and non-commercial research purposes, including use in scholarly publications, provided that proper attribution is given to the authors.
+
+Permitted uses include:
+Research and educational use at academic, clinical, or research institutions for non-commerical purposes
+Generation of figures, results, and analyses for scholarly and peer-reviewed publications
+Internal, non-commercial evaluation and testing of the Software
+
+The Software may NOT be used for:
+Commercial purposes, including sale, sublicensing, or fee-based services
+Integration into commercial products, services, or workflows
+Distribution to third parties for commercial use
+
+Any commercial use of the Software requires a separate written license agreement from the copyright holder.
+
+THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM THE USE OF THE SOFTWARE.
