@@ -514,12 +514,13 @@ class MainWindow(QMainWindow):
         #self.ui.circ_Slow_Axis.setImageSize(self.processParameters,self.ui.distance,self.ui.circ_Slow_Axis.geometry())
 
     def go_home(self):
-        self.ui.stackedWidget.setCurrentIndex(0)
-        self.ui.label.setText(self._translate("MainWindow", "Status: VisOCT Explorer "+self.status))
-        self.ui.horizontalSlider_01.valueChanged.disconnect()
-        self.ui.Edit_circ_x.textChanged.disconnect()
-        self.ui.Edit_circ_y.textChanged.disconnect()
-        self.ui.Edit_radius.textChanged.disconnect()
+        if self.ui.stackedWidget.currentIndex() != 0:
+            self.ui.stackedWidget.setCurrentIndex(0)
+            self.ui.label.setText(self._translate("MainWindow", "Status: VisOCT Explorer "+self.status))
+            self.ui.horizontalSlider_01.valueChanged.disconnect()
+            self.ui.Edit_circ_x.textChanged.disconnect()
+            self.ui.Edit_circ_y.textChanged.disconnect()
+            self.ui.Edit_radius.textChanged.disconnect()
 
     def reset_circ_measurement(self):
         self.ui.circ_Slow_Axis.clear()
@@ -1354,7 +1355,7 @@ class MainWindow(QMainWindow):
             pixelmap_file = open(cur_dir+"\pixelmap.txt", "w")
             pixelmap_file.write(meta_data_dict["pixel"])
             pixelmap_file.close()
-            self.processParameters = processParams(meta_data_dict["chunks"], filenames, from_fname, meta_data_dict, self.match_Path)
+            self.processParameters = processParams(meta_data_dict["chunks"], filenames, from_fname, meta_data_dict, meta_data_dict["pixel"])
 
             if self.processParameters.balFlag:
                 self.ui.balancing_label.setText(self._translate("MainWindow", "Balanced: Yes"))
