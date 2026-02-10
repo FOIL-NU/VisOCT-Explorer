@@ -115,17 +115,6 @@ class fringes:
 
         raw[:,interpMat<=0] = 0
         raw[:,interpMat>=2047] = 0
-        print(self.processParams.envelop)
-        if self.processParams.envelop:
-
-            envelop = cp.zeros_like(raw)
-            for i in range(cp.shape(raw)[0]):
-                aline = raw[i,:]
-                envelop[i,:] = cp.abs(hilbert(aline))
-            envelop_avg = cp.mean(envelop,axis=0)
-            raw = raw/envelop_avg
-            del envelop
-
         endtime = time.time()
         print(round(endtime-startime,2))
         del raw1

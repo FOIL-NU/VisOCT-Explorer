@@ -17,6 +17,7 @@ from random import randint
 from sidebar_ui import Ui_MainWindow
 from sklearn.mixture import GaussianMixture
 
+from scipy.signal import hilbert
 
 
 class ProcessingThread(QThread):
@@ -207,6 +208,17 @@ class ProcessingThread(QThread):
                 data.raw = raw_fringes.get_unbalance_Fringes(progress=self.updateProgressBar)
             endTime = time.time()
             del raw_fringes
+
+            if self.processParameters.envelop:
+
+                envelop = np.zeros_like(data.raw)
+                for i in range(np.shape(data.raw)[0]):
+                    aline = data.raw[i,:]
+                    envelop[i,:] = np.abs(hilbert(aline))
+                envelop_avg = np.mean(envelop,axis=0)
+                data.raw = data.raw/envelop_avg
+                del envelop
+
             gc.collect()
 
             self.progress.emit(1,round(endTime-startTime,2))

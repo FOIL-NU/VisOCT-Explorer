@@ -1298,27 +1298,6 @@ class MainWindow(QMainWindow):
             filenames = self.open_file_dialog.path_edit.text()
             print(filenames)
             meta_data_dict = {}
-            if "_1.RAW" in filenames or "_2.RAW" in filenames:
-                try:
-                    with open(cur_dir+"/pixelmap.txt", 'r') as file:
-                        self.match_Path = str(file.read().rstrip())
-                            
-                except (IOError,FileNotFoundError):
-                    msg_box = QMessageBox()
-                    msg_box.setIcon(QMessageBox.Icon.Warning)
-                    msg_box.setWindowTitle("Warning")
-                    msg_box.setText('Pixel map not selected yet.\nYou can select an existing pixel map to begin with.\nOr generate one for the current dataset?')
-                    
-                    select_button = QPushButton("Select existing pixel map")
-
-                    select_button.clicked.connect(self.select_pixmap)
-
-                    msg_box.addButton(select_button, QMessageBox.AcceptRole)
-
-                    msg_box.exec()
-                    return
-            else:
-                self.match_Path = "None"
 
             self.image_ready = False
             self.ui.open_file_btn.clicked.disconnect(self.open_file)
