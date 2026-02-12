@@ -192,7 +192,7 @@ class ProcessingThread(QThread):
             
             class data:
                 pass
-            wavePath = 'Wavelength Files/wavelength-OH.01.2021.0005-created-28-Jan-2021'
+            wavePath = processParameters.wavelength_file
             with open(wavePath, 'rb') as f:
                 b = f.read()
 

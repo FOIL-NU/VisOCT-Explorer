@@ -62,6 +62,7 @@ class processParams:
         self.eye = 3
         self.envelop = meta_data_dict["envelope"]
         self.match_path = meta_data_dict["pixel"]
+        self.wavelength_file = meta_data_dict["wavelength"]
         
         if from_fname:
             dir0 = os.path.dirname(file_path)                                                       # Extract file directory

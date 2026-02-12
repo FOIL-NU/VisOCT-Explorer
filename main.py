@@ -1314,6 +1314,12 @@ class MainWindow(QMainWindow):
             meta_data_dict["envelope"] = str(self.system_setting.enable_extraction.isChecked())
             meta_data_dict["chunks"] = int(self.system_setting.Edit_num_chunk.value())
             meta_data_dict["pixel"] = str(self.open_file_dialog.path_edit_pixmap.text())
+            
+            if not self.open_file_dialog.wave_path_edit.text():
+                meta_data_dict["wavelength"] = 'Wavelength Files/wavelength_blizz_06'
+            else:
+                meta_data_dict["wavelength"] = str(self.open_file_dialog.path_edit_pixmap.text())
+                
             if "Bal" in filenames:
                 from_fname = True
             else:

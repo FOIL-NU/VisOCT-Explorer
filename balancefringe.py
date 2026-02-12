@@ -10,7 +10,6 @@ try:
     #from scipy import interpolate
     #from univariatespline import InterpolatedUnivariateSpline
     from cupyx.scipy import interpolate
-    from cupyx.scipy.signal import hilbert
 except ValueError:
     GPU_available = False
 
