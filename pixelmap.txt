@@ -1,1 +1,1 @@
-D:/Test Data/glass/Audi_OCT_Bal_09_40_05_512_512_Rect_X3000um_Y3000um___NU18_to_NU17_cal.mat
+D:/Test Data/duke/exp_release/Inter-spectrometer Pixel Map

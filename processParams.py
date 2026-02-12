@@ -63,19 +63,21 @@ class processParams:
         self.envelop = meta_data_dict["envelope"]
         self.match_path = meta_data_dict["pixel"]
         self.wavelength_file = meta_data_dict["wavelength"]
+        dir0 = os.path.dirname(file_path)                                                       # Extract file directory
+        fname = os.path.basename(file_path)                                                    # Extract file name from path
+        if match_path!=None:
+            fname = fname[0:(len(fname)-4)]
+
+        self.excel_fname = dir0+'/Measurements/'+fname 
+        self.fname = f"{dir0}{'/'}{fname}{'.RAW'}"
+
+        self.SRFlag = 0
+        self.newSRFlag = 0
         
         if from_fname:
-            dir0 = os.path.dirname(file_path)                                                       # Extract file directory
-            fname = os.path.basename(file_path)                                                    # Extract file name from path
-            if match_path!=None:
-                fname = fname[0:(len(fname)-4)]
-
-            self.excel_fname = dir0+'/Measurements/'+fname 
             
-            self.adaptive_pix_map = fname+'_pixelMap'                                                    # Remove file extension
-
             fileInfo = fname.split('_')                                                            # parse filename for scan parameters
-            self.fname = f"{dir0}{'/'}{fname}{'.RAW'}"
+            
             print(fname)
             self.human = False
             if 'OD' in fileInfo:
@@ -89,17 +91,12 @@ class processParams:
             if 'SR' in fileInfo:
                 self.SRFlag = 1
                 self.newSRFlag = 1 if 'New' in fileInfo else 0
-            else:
-                self.SRFlag = 0
-                self.newSRFlag = 0
+
             # Determine if file is balanced
             if 'Bal' in fileInfo:
                 print(65535)
                 self.balFlag = 1
                 bal_index = fileInfo.index('Bal')
-                self.hr = int(fileInfo[bal_index+1])
-                self.min = int(fileInfo[bal_index+2])
-                self.sec = int(fileInfo[bal_index+3])
                 self.res_fast = int(fileInfo[bal_index+4])                                              # number A-lines along fast axis
                 self.res_slow = int(fileInfo[bal_index+5])                                              # number A-lines along slow axis
                 self.xrng = [float(s) for s in re.findall(r'-?\d+\.?\d*', fileInfo[bal_index+7])][0]    # x range in um
@@ -162,6 +159,7 @@ class processParams:
                 self.yrng = 1
         # process parameter not from file name
         else:
+            
             self.balFlag = meta_data_dict["balanced"]
             self.scanMode = meta_data_dict["bidirection"]
             self.repNum = meta_data_dict["repNum"]
@@ -171,6 +169,10 @@ class processParams:
             self.res_slow = meta_data_dict["res_slow"]
             self.xrng = meta_data_dict["xrng"]
             self.yrng = meta_data_dict["yrng"]
+            if self.repNum != 1:
+                self.octaFlag = 1
+            else:
+                self.octaFlag = 0
             if self.yrng == 0:
                 self.yrng = 1
 

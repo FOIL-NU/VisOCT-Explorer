@@ -84,7 +84,7 @@ class MainWindow(QMainWindow):
         self.cur_img_slow_no = 0
         self.cur_img_fast_no = 0
         self.progressValue = 0
-        self.setWindowTitle("VisOCT Metro")
+        self.setWindowTitle("VisOCT Explorer")
         self.image_ready = False
         self.flip_bscan = False
         self.start_point_marked = False
@@ -1318,8 +1318,8 @@ class MainWindow(QMainWindow):
             if not self.open_file_dialog.wave_path_edit.text():
                 meta_data_dict["wavelength"] = 'Wavelength Files/wavelength_blizz_06'
             else:
-                meta_data_dict["wavelength"] = str(self.open_file_dialog.path_edit_pixmap.text())
-                
+                meta_data_dict["wavelength"] = str(self.open_file_dialog.wave_path_edit.text())
+                print("wave:",meta_data_dict["wavelength"])
             if "Bal" in filenames:
                 from_fname = True
             else:
