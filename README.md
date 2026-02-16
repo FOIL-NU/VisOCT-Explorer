@@ -41,7 +41,7 @@ After cloning the repository:
 ## Quick Start
 
 ## Example Data
-Example datasets are available upon request via a  [web-based form](https://www.visibleoct.org/home); access details will be provided by email for non-commercial research use.
+A compressed example dataset (ZIP archive) for demonstration and validation purposes is available for download [here](https://www.visibleoct.org/visoct-explorer).
 
 ## How to Cite
 If you use **Vis-OCT Explorer** in your research or publications, please cite the following preprint:
